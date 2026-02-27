@@ -35,7 +35,7 @@ static FORCE_INLINE int64_t subtract_64(uint64_t first, uint64_t second) {
     return (first > second) ? (int64_t)abs_diff : -(int64_t)abs_diff;
 }
 
-#if defined(STM32G4) || defined(STM32_G)
+#if defined(STM32G)
 #define CRITICAL_SECTION(code_blk)          \
     uint32_t primask_bit = __get_PRIMASK(); \
     __disable_irq();                        \
