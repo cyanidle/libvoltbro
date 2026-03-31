@@ -7,10 +7,11 @@
 #include "stm32g4xx_ll_gpio.h"
 #include "stm32g4xx_ll_spi.h"
 
-#if defined(HAL_TIM_MODULE_ENABLED) && defined(HAL_CORDIC_MODULE_ENABLED) && defined(HAL_ADC_MODULE_ENABLED) && defined(HAL_SPI_MODULE_ENABLED)
+#if defined(HAL_TIM_MODULE_ENABLED) && defined(HAL_CORDIC_MODULE_ENABLED) && defined(HAL_ADC_MODULE_ENABLED) && defined(HAL_SPI_MODULE_ENABLED) && defined(HAL_I2C_MODULE_ENABLED)
 
 #include "../foc/foc.hpp"
 #include <voltbro/encoders/ASxxxx/AS5047P.hpp>
+#include <voltbro/devices/stspin32g4.hpp>
 #include <voltbro/math/dsp/low_pass_filter.hpp>
 #include <voltbro/eeprom/eeprom.hpp>
 #include "voltbro/generics/spi_mixin.hpp"
@@ -298,8 +299,24 @@ enum class AngleEncoderType : uint8_t {
 
 class VBDrive final: public FOC {
 protected:
+    static constexpr uint32_t bootstrap_charge_time_ms = 5U;
+
     AngleEncoderType angle_encoder =  AngleEncoderType::ROTOR;
+    STSPIN32G4& gate_driver;
     InductiveSensor& inductive_sensor;
+    arm_atomic(uint32_t) bootstrap_charge_deadline_ms = 0;
+
+    FORCE_INLINE bool is_bootstrap_charging(uint32_t now_ms) const {
+        return static_cast<int32_t>(bootstrap_charge_deadline_ms - now_ms) > 0;
+    }
+
+    FORCE_INLINE void force_bootstrap_charge() {
+        DQs[0] = 0;
+        DQs[1] = 0;
+        DQs[2] = 0;
+        set_pwm();
+    }
+
     void update_shaft_angle() override {
         if (angle_encoder == AngleEncoderType::SHAFT) {
             shaft_angle = inductive_sensor.get_revolutions() * pi2 + inductive_sensor.get_angle();
@@ -320,6 +337,7 @@ public:
         TIM_HandleTypeDef* htim,
         AS5047P& encoder,
         VBInverter& inverter,
+        STSPIN32G4& gate_driver,
         InductiveSensor& inductive_sensor,
         AngleEncoderType angle_encoder
     ):
@@ -335,6 +353,7 @@ public:
             inverter
         ),
         angle_encoder(angle_encoder),
+        gate_driver(gate_driver),
         inductive_sensor(inductive_sensor)
         {}
 
@@ -352,6 +371,18 @@ public:
                 inductive_sensor.update();
             })
             iteration += 1;
+
+            if (!_is_on) {
+                FOC::update_sensors();
+                return;
+            }
+
+            const uint32_t now_ms = HAL_GetTick();
+            if (is_bootstrap_charging(now_ms)) {
+                FOC::update_sensors();
+                force_bootstrap_charge();
+                return;
+            }
 
             FOC::update();
         }
@@ -382,6 +413,42 @@ public:
             inductive_sensor.init();
 
             return result;
+        }
+
+        HAL_StatusTypeDef stop() override {
+            _is_on = false;
+            bootstrap_charge_deadline_ms = 0;
+            __HAL_TIM_MOE_DISABLE(htim);
+
+            HAL_StatusTypeDef result = gate_driver.request_standby();
+            if (result != HAL_OK) {
+                return result;
+            }
+            return HAL_OK;
+        }
+
+        HAL_StatusTypeDef start() override {
+            bootstrap_charge_deadline_ms = HAL_GetTick() + bootstrap_charge_time_ms;
+
+            HAL_StatusTypeDef result = gate_driver.wake();
+            if (result != HAL_OK) {
+                bootstrap_charge_deadline_ms = 0;
+                return result;
+            }
+
+            __HAL_TIM_MOE_ENABLE(htim);
+            force_bootstrap_charge();
+
+            result = gate_driver.clear_faults();
+            if (result != HAL_OK) {
+                __HAL_TIM_MOE_DISABLE(htim);
+                bootstrap_charge_deadline_ms = 0;
+                return result;
+            }
+
+            quit_stall();
+            _is_on = true;
+            return HAL_OK;
         }
 
         FORCE_INLINE void set_pwm() override {
