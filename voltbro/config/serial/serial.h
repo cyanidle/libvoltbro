@@ -205,6 +205,11 @@ public:
         while (HAL_UART_GetState(huart) == HAL_UART_STATE_BUSY) {}
     }
 
+    void persist_config_now() {
+        save_config();
+        do_save = false;
+    }
+
     StateT::ValueT get_state() {
         return app_state;
     }
