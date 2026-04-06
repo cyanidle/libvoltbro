@@ -4,6 +4,7 @@
 #include "stm32g4xx_hal.h"
 #if defined(HAL_TIM_MODULE_ENABLED) && defined(HAL_SPI_MODULE_ENABLED)
 
+#include <bit>
 #include <utility>
 
 #include "stepper_base.hpp"
@@ -30,14 +31,14 @@ class StepperMotorSPI : public StepperBase {
 protected:
     const StepperSPIConfig config;
     arm_atomic(bool) _is_on = false;
-    arm_atomic(uint32_t) position;
+    arm_atomic(int32_t) position;
 public:
     StepperMotorSPI(const StepperSPIConfig&& driver, GpioPin&& enn_pin):
         StepperBase(std::forward<GpioPin&&>(enn_pin)),
         config(std::move(driver))
     {};
 
-    uint32_t get_position() {
+    int32_t get_position() {
         return position;
     }
 
@@ -68,10 +69,12 @@ public:
     }
 
     void update_position(bool skip_first=true) {
+        uint32_t raw_position = 0;
         if (!skip_first) {
-            send_recieve_data(0x21, 0x00000000, &position);
+            send_recieve_data(0x21, 0x00000000, &raw_position);
         }
-        send_recieve_data(0x21, 0x00000000, &position);
+        send_recieve_data(0x21, 0x00000000, &raw_position);
+        position = std::bit_cast<int32_t>(raw_position);
     }
 
     virtual HAL_StatusTypeDef send_config() {
@@ -106,9 +109,9 @@ public:
         return send_config();
     }
 
-    virtual void set_target(uint32_t value) {
+    virtual void set_target(int32_t value) {
         uint32_t recv;
-        send_recieve_data(0xAD, value, &recv);
+        send_recieve_data(0xAD, std::bit_cast<uint32_t>(value), &recv);
     }
 
     void update() override {
