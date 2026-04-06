@@ -28,6 +28,7 @@ struct DriveLimits {
     float user_position_lower_limit = -FLOAT_INF;
     float user_position_upper_limit = FLOAT_INF;
     float user_angle_offset = 0.0f;
+    int8_t user_angle_direction = 1;
 };
 
 class AbstractMotor {

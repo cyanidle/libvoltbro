@@ -100,6 +100,10 @@ protected:
         return is_within_symmetric_limit(torque, get_effective_torque_limit());
     }
 
+    FORCE_INLINE float get_direction_multiplier() const {
+        return static_cast<float>(drive_limits.user_angle_direction);
+    }
+
     const DriveInfo drive_info;
     BaseInverter& inverter;
     const int32_t full_pwm;
@@ -133,6 +137,9 @@ public:
     }
 
     virtual bool check_limits(const DriveLimits& limits) override {
+        if ((limits.user_angle_direction != -1) && (limits.user_angle_direction != 1)) {
+            return false;
+        }
         if (
             std::isfinite(limits.user_speed_limit) &&
             (limits.user_speed_limit < 0.0f)
@@ -185,12 +192,12 @@ public:
             return false;
         }
         point_type = SetPointType::TORQUE;
-        target = torque;
+        target = torque * get_direction_multiplier();
         return true;
     }
     FORCE_INLINE virtual bool set_voltage_point(float voltage) {
         point_type = SetPointType::VOLTAGE;
-        target = voltage;
+        target = voltage * get_direction_multiplier();
         return true;
     }
     const DriveInfo& get_info() const {
@@ -203,16 +210,16 @@ public:
         return _is_on;
     }
     FORCE_INLINE float get_angle() const {
-        return shaft_angle + drive_limits.user_angle_offset;
+        return shaft_angle * get_direction_multiplier() + drive_limits.user_angle_offset;
     }
     FORCE_INLINE float get_velocity() const {
-        return shaft_velocity;
+        return shaft_velocity * get_direction_multiplier();
     }
     FORCE_INLINE float get_voltage() const {
         return inverter.get_busV();
     }
     FORCE_INLINE virtual float get_torque() const {
-        return shaft_torque;
+        return shaft_torque * get_direction_multiplier();
     }
 
     void detect_stall(double passed_time_abs);

@@ -282,7 +282,7 @@ void FOC::update() {
         else {
             float control_error = 0;
             if (point_type == SetPointType::POSITION) {
-                control_error = target - shaft_angle;
+                control_error = target - get_angle();
             }
             else if (point_type == SetPointType::VELOCITY) {
                 control_error = target - control_velocity;
@@ -292,7 +292,7 @@ void FOC::update() {
             control_error_glob = control_error;
             controller_response_glob = controller_response;
             #endif
-            i_q_set = controller_response;
+            i_q_set = controller_response * get_direction_multiplier();
         }
 
         const float abs_max_current_from_torque = (drive_info.max_torque / drive_info.torque_const / gear_ratio_f);
