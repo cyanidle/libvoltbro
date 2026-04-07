@@ -174,10 +174,10 @@ void FOC::update_sensors() {
     apply_kalman();
     update_shaft_angle();
     if (!is_control_velocity_initialized) {
-        control_velocity = shaft_velocity;
+        control_velocity = get_velocity();
         is_control_velocity_initialized = true;
     } else {
-        control_velocity = velocity_lpf(control_velocity, shaft_velocity);
+        control_velocity = velocity_lpf(control_velocity, get_velocity());
     }
     #ifdef MONITOR
     value_control_velocity = control_velocity;
