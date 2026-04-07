@@ -92,8 +92,8 @@ struct AppState {
 };
 
 static constexpr std::string NODE_ID_PARAM = "node_id";
-static constexpr std::string FDCAN_DATA_PARAM = "data_baud";
-static constexpr std::string FDCAN_NOMINAL_PARAM = "nominal_baud";
+static constexpr std::string FDCAN_DATA_PARAM = "d_baud";
+static constexpr std::string FDCAN_NOMINAL_PARAM = "n_baud";
 
 struct __attribute__((packed)) BaseConfigData {
     static constexpr uint32_t TYPE_ID = 0x01234567;
@@ -394,23 +394,23 @@ public:
 
 #define CHECK_AND_PRINT_PARAM_ANY(field_name, param_name, specifier) \
     else if (param == param_name) { \
-        responses.append("%s: "#specifier"\n\r", #field_name, field_name); \
+        responses.append("%s: "#specifier"\n\r", param_name.c_str(), field_name); \
     }
 
 #define CHECK_AND_PRINT_PARAM_INT(field_name, param_name) \
     else if (param == param_name) { \
-        responses.append("%s: %d\n\r", #field_name, field_name); \
+        responses.append("%s: %d\n\r", param_name.c_str(), field_name); \
     }
 
 #define CHECK_AND_PRINT_PARAM_FLOAT(field_name, param_name) \
     else if (param == param_name) { \
-        responses.append("%s: %f\n\r", #field_name, field_name); \
+        responses.append("%s: %f\n\r", param_name.c_str(), field_name); \
     }
 
 #define CHECK_AND_SET_PARAM_FLOAT(field_name, param_name) \
     else if (param == param_name) { \
         field_name = new_float_value; \
-        responses.append("OK: %s :%f\n\r", #field_name, field_name); \
+        responses.append("OK: %s:%f\n\r", param_name.c_str(), field_name); \
     }
 
 #endif

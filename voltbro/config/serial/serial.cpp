@@ -35,10 +35,10 @@ bool get_base_params(BaseConfigData* data, const std::string& param, UARTRespons
         responses.append("node_id:%u\n\r", data->node_id);
     }
     else if (param == FDCAN_DATA_PARAM) {
-        responses.append("data_baud:%u\n\r", to_underlying(data->fdcan_data_baud));
+        responses.append("d_baud:%u\n\r", to_underlying(data->fdcan_data_baud));
     }
     else if (param == FDCAN_NOMINAL_PARAM) {
-        responses.append("nominal_baud:%u\n\r", to_underlying(data->fdcan_nominal_baud));
+        responses.append("n_baud:%u\n\r", to_underlying(data->fdcan_nominal_baud));
     }
     else {
         return false;
@@ -76,11 +76,11 @@ bool set_base_params(
     }
     else if (param == FDCAN_DATA_PARAM) {
         data->fdcan_data_baud = static_cast<FDCANDataBaud>(new_int_value);
-        responses.append("OK: data_baud:%u\n\r", to_underlying(data->fdcan_data_baud));
+        responses.append("OK: d_baud:%u\n\r", to_underlying(data->fdcan_data_baud));
     }
     else if (param == FDCAN_NOMINAL_PARAM) {
         data->fdcan_nominal_baud = static_cast<FDCANNominalBaud>(new_int_value);
-        responses.append("OK: nominal_baud:%u\n\r", to_underlying(data->fdcan_nominal_baud));
+        responses.append("OK: n_baud:%u\n\r", to_underlying(data->fdcan_nominal_baud));
     }
     else {
         responses.append("ERROR: Unknown parameter\n\r");

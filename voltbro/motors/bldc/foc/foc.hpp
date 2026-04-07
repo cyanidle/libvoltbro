@@ -13,6 +13,7 @@
 
 #include "../bldc.h"
 #include "voltbro/math/regulators/pid.hpp"
+#include "voltbro/math/dsp/low_pass_filter.hpp"
 
 #define USE_CALIBRATION_ARRAY
 constexpr size_t CALIBRATION_BUFF_SIZE = 2048;
@@ -61,6 +62,8 @@ struct FiltersConfig {
     float g2;
     float g3;
     float I_lpf_coefficient;
+    float velocity_lpf_coefficient = 1.0f;
+    float i_q_slew_rate = 0.0f;
 };
 
 /**
@@ -75,6 +78,10 @@ protected:
     calibration_array_t* lookup_table = nullptr;
     GenericEncoder& encoder;
     const FiltersConfig filters_config;
+    LowPassFilter velocity_lpf;
+    float control_velocity = 0.0f;
+    bool is_control_velocity_initialized = false;
+    float i_q_set_slewed = 0.0f;
     FOCTarget foc_target;
     PIDRegulator q_reg;
     PIDRegulator d_reg;
@@ -103,7 +110,7 @@ public:
 
     FOC(
         float T,
-        FiltersConfig&& filters_config,
+        FiltersConfig&& filters_config_,
         PIDConfig&& q_config,
         PIDConfig&& d_config,
         const DriveLimits& drive_limits,
@@ -120,7 +127,8 @@ public:
         ),
         T(T),
         encoder(encoder),
-        filters_config(std::move(filters_config)),
+        filters_config(filters_config_),
+        velocity_lpf(filters_config.velocity_lpf_coefficient),
         q_reg(std::move(q_config)),
         d_reg(std::move(d_config))
         {}

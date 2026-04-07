@@ -50,6 +50,7 @@ volatile float value_foc_p_kp = 0;
 volatile float value_foc_v_kp = 0;
 volatile float value_foc_t = 0;
 volatile encoder_data raw_value = 0;
+volatile float value_control_velocity = 0;
 #endif
 
 void FOC::update_angle() {
@@ -172,6 +173,15 @@ void FOC::update_sensors() {
 #endif
     apply_kalman();
     update_shaft_angle();
+    if (!is_control_velocity_initialized) {
+        control_velocity = shaft_velocity;
+        is_control_velocity_initialized = true;
+    } else {
+        control_velocity = velocity_lpf(control_velocity, shaft_velocity);
+    }
+    #ifdef MONITOR
+    value_control_velocity = control_velocity;
+    #endif
 #ifdef FOC_PROFILE
     sensors_profile.kalman = DWT->CYCCNT - t_start;
     sensors_profile.total = DWT->CYCCNT - start_total;
@@ -235,6 +245,7 @@ void FOC::update() {
     shaft_torque = I_Q * drive_info.torque_const * gear_ratio_f;
 
     if (point_type == SetPointType::VOLTAGE) {
+        i_q_set_slewed = 0.0f;
         V_d = 0;
         V_q = target;
     }
@@ -261,7 +272,7 @@ void FOC::update() {
             #endif
             i_q_set = 1.0f / drive_info.torque_const * (
                 foc_target.angle_kp * (foc_target.angle - get_angle()) +
-                foc_target.velocity_kp * (foc_target.velocity - get_velocity()) +
+                foc_target.velocity_kp * (foc_target.velocity - control_velocity) +
                 (foc_target.torque / gear_ratio_f)
             );
         }
@@ -274,7 +285,7 @@ void FOC::update() {
                 control_error = target - shaft_angle;
             }
             else if (point_type == SetPointType::VELOCITY) {
-                control_error = target - shaft_velocity;
+                control_error = target - control_velocity;
             }
             float controller_response = control_reg.regulation(control_error, T, false);
             #ifdef MONITOR
@@ -298,8 +309,19 @@ void FOC::update() {
         if (fabs(i_q_set) > 30.0f) {
             i_q_set = copysign(30.0f, i_q_set);
         }
+        if (filters_config.i_q_slew_rate > 0.0f) {
+            const float max_i_q_delta = filters_config.i_q_slew_rate * T;
+            const float i_q_delta = std::clamp(
+                i_q_set - i_q_set_slewed,
+                -max_i_q_delta,
+                max_i_q_delta
+            );
+            i_q_set_slewed += i_q_delta;
+        } else {
+            i_q_set_slewed = i_q_set;
+        }
 
-        i_q_error = i_q_set - I_Q;
+        i_q_error = i_q_set_slewed - I_Q;
         q_response = q_reg.regulation(i_q_error, T, busV);
         V_q = q_response;
         #ifdef FOC_PROFILE
