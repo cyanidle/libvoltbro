@@ -4,6 +4,8 @@
 #include "stm32g4xx_hal.h"
 #if defined(HAL_TIM_MODULE_ENABLED) && defined(HAL_SPI_MODULE_ENABLED)
 
+#include "stm32g4xx_ll_spi.h"
+
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -22,7 +24,7 @@ struct StepperSPIConfig {
     const GpioPin cfg6;
 
     GpioPin spi_ss;
-    SPI_HandleTypeDef* const spi;
+    SPI_HandleTypeDef* spi;
 
     const pwm_channel step_channel;
     TIM_HandleTypeDef* const timer;
@@ -169,7 +171,7 @@ struct RegisterConfig {
 
 class StepperMotorSPI : public StepperBase {
 protected:
-    const StepperSPIConfig config;
+    StepperSPIConfig config;
     const tmc5160::RegisterConfig register_config;
     arm_atomic(bool) _is_on = false;
     arm_atomic(int32_t) position;
@@ -210,7 +212,10 @@ public:
 
         config.spi_ss.reset();
         delay_cpu_cycles(CYCLES_100NS_160Mhz * 10 * 11);
+        while (!LL_SPI_IsActiveFlag_TXE(config.spi->Instance)) {}
         check_status(HAL_SPI_Transmit(config.spi, &address, 1, HAL_MAX_DELAY))
+
+        while (!LL_SPI_IsActiveFlag_TXE(config.spi->Instance)) {}
         check_status(HAL_SPI_TransmitReceive(config.spi, tx_buffer, rx_buffer, 4, HAL_MAX_DELAY))
         config.spi_ss.set();
 
@@ -221,14 +226,18 @@ public:
         received_data |= (uint32_t)rx_buffer[3];
         *out = received_data;
 
+        while (LL_SPI_IsActiveFlag_BSY(config.spi->Instance)) {}
         return HAL_OK;
     }
 
-    void update_position(bool skip_first=true) {
+    void update_position() {
+        uint32_t discard = 0;
         uint32_t raw_position = 0;
-        if (!skip_first) {
-            send_recieve_data(0x21, 0x00000000, &raw_position);
-        }
+
+        // TMC5160 SPI reads are pipelined: the first transaction queues the XACTUAL read,
+        // the second transaction returns its value. A previous write (for example XTARGET)
+        // invalidates any earlier queued read, so this must be done on every poll.
+        send_recieve_data(0x21, 0x00000000, &discard);
         send_recieve_data(0x21, 0x00000000, &raw_position);
         position = std::bit_cast<int32_t>(raw_position);
     }
