@@ -115,6 +115,40 @@ struct RegisterConfig {
     uint32_t vstop = 10;
 };
 
+struct Diagnostics {
+    // SPI status byte returned with every 40-bit TMC5160 datagram.
+    // Its bits mirror a few high-level status flags latched at the end of the previous access.
+    uint8_t spi_status = 0;
+
+    // GSTAT (0x01): global latched fault/reset flags.
+    // This is where reset, driver shutdown and charge-pump undervoltage show up.
+    uint32_t gstat = 0;
+
+    // RAMP_STAT (0x35): motion-controller state.
+    // Contains flags like standstill, target position reached and stop/stall-stop events.
+    uint32_t ramp_stat = 0;
+
+    // DRV_STATUS (0x6F): detailed power-stage and StallGuard status.
+    // This is where short, open-load, overtemperature and StallGuard indicators live.
+    uint32_t drv_status = 0;
+
+    // Number of times firmware detected a TMC reset flag and re-sent configuration
+    // to bring the driver back into the expected state.
+    uint32_t fault_reset_count = 0;
+
+    bool has_reset() const {
+        return (gstat & 0x00000001U) != 0;
+    }
+
+    bool has_driver_error() const {
+        return (gstat & 0x00000002U) != 0;
+    }
+
+    bool has_charge_pump_undervoltage() const {
+        return (gstat & 0x00000004U) != 0;
+    }
+};
+
 // Build the exact SPI register writes used to configure the TMC5160 ramp generator.
 // Fixed settings intentionally kept out of RegisterConfig:
 // - GCONF = 0: no global special modes enabled
@@ -170,6 +204,11 @@ protected:
     StepperSPIConfig config;
     const tmc5160::RegisterConfig register_config;
     arm_atomic(int32_t) position;
+    arm_atomic(uint8_t) last_spi_status = 0;
+    arm_atomic(uint32_t) last_gstat = 0;
+    arm_atomic(uint32_t) last_ramp_stat = 0;
+    arm_atomic(uint32_t) last_drv_status = 0;
+    arm_atomic(uint32_t) fault_reset_count = 0;
 
     template <size_t N>
     HAL_StatusTypeDef send_register_writes(const std::array<tmc5160::RegisterWrite, N>& register_writes) {
@@ -199,6 +238,7 @@ protected:
             return status;
         }
 
+        last_spi_status = rx_buffer[0];
         if (spi_status != nullptr) {
             *spi_status = rx_buffer[0];
         }
@@ -238,6 +278,64 @@ public:
 
     int32_t get_position() {
         return position;
+    }
+
+    tmc5160::Diagnostics get_diagnostics() const {
+        return tmc5160::Diagnostics{
+            .spi_status = last_spi_status,
+            .gstat = last_gstat,
+            .ramp_stat = last_ramp_stat,
+            .drv_status = last_drv_status,
+            .fault_reset_count = fault_reset_count
+        };
+    }
+
+    HAL_StatusTypeDef update_diagnostics() {
+        uint32_t gstat = 0;
+        uint32_t ramp_stat = 0;
+        uint32_t drv_status = 0;
+
+        HAL_StatusTypeDef status = read_register(0x01, &gstat);
+        if (status != HAL_OK) {
+            return status;
+        }
+        status = read_register(0x35, &ramp_stat);
+        if (status != HAL_OK) {
+            return status;
+        }
+        status = read_register(0x6F, &drv_status);
+        if (status != HAL_OK) {
+            return status;
+        }
+
+        last_gstat = gstat;
+        last_ramp_stat = ramp_stat;
+        last_drv_status = drv_status;
+        return HAL_OK;
+    }
+
+    HAL_StatusTypeDef recover_if_reset() {
+        HAL_StatusTypeDef status = update_diagnostics();
+        if (status != HAL_OK) {
+            return status;
+        }
+        if ((last_gstat & 0x00000001U) == 0) {
+            return HAL_OK;
+        }
+
+        status = send_config();
+        if (status != HAL_OK) {
+            return status;
+        }
+
+        status = write_register(0x81, 0x00000001U);
+        if (status != HAL_OK) {
+            return status;
+        }
+
+        last_gstat &= ~0x00000001U;
+        fault_reset_count = fault_reset_count + 1;
+        return HAL_OK;
     }
 
     void update_position() {
