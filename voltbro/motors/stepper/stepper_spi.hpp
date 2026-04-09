@@ -101,6 +101,10 @@ struct RegisterConfig {
     // Range: 0..(2^23)-512 [usteps / t].
     uint32_t vmax = 100000;
 
+    // DMAX is the deceleration above V1.
+    // Range: 0..65535 [usteps / ta^2]. If A1=0 disables the dedicated A1/D1 phase, DMAX becomes the active deceleration setting.
+    uint16_t dmax = 50000;
+
     // D1 is the first deceleration phase between V1 and VSTOP.
     // Range: 1..65535 [usteps / ta^2] in positioning mode. Do not use 0 there.
     uint16_t d1 = 1400;
@@ -120,7 +124,7 @@ struct RegisterConfig {
 // - XACTUAL starts from 0
 [[nodiscard]] constexpr auto build_register_config(
     const RegisterConfig& config
-) -> std::array<RegisterWrite, 14> {
+) -> std::array<RegisterWrite, 15> {
     detail::runtime_check(config.ihold <= 31);
     detail::runtime_check(config.irun <= 31);
     detail::runtime_check(config.iholddelay <= 15);
@@ -150,6 +154,7 @@ struct RegisterConfig {
         {0xA5, config.v1},  // V1: threshold velocity between A1 and AMAX / D1 and DMAX
         {0xA6, static_cast<uint32_t>(config.amax)},  // AMAX: acceleration above V1
         {0xA7, config.vmax},  // VMAX: target cruise velocity for ramp motion
+        {0xA8, static_cast<uint32_t>(config.dmax)},  // DMAX: deceleration above V1
         {0xAA, static_cast<uint32_t>(config.d1)},  // D1: first deceleration below V1
         {0xAB, config.vstop},  // VSTOP: near-zero stop velocity for positioning mode
         {0xA0, 0x00000000},  // RAMPMODE = 0: target-position mode using XTARGET
