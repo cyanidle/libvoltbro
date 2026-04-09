@@ -4,8 +4,6 @@
 #include "stm32g4xx_hal.h"
 #if defined(HAL_TIM_MODULE_ENABLED) && defined(HAL_SPI_MODULE_ENABLED)
 
-#include "stm32g4xx_ll_spi.h"
-
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -13,6 +11,7 @@
 #include <utility>
 
 #include "stepper_base.hpp"
+#include "voltbro/generics/spi_mixin.hpp"
 
 struct StepperSPIConfig {
     const GpioPin direction;
@@ -126,7 +125,7 @@ struct RegisterConfig {
 // - XACTUAL starts from 0
 [[nodiscard]] constexpr auto build_register_config(
     const RegisterConfig& config
-) -> std::array<RegisterWrite, 15> {
+) -> std::array<RegisterWrite, 14> {
     detail::runtime_check(config.ihold <= 31);
     detail::runtime_check(config.irun <= 31);
     detail::runtime_check(config.iholddelay <= 15);
@@ -160,30 +159,70 @@ struct RegisterConfig {
         {0xAA, static_cast<uint32_t>(config.d1)},  // D1: first deceleration below V1
         {0xAB, config.vstop},  // VSTOP: near-zero stop velocity for positioning mode
         {0xA0, 0x00000000},  // RAMPMODE = 0: target-position mode using XTARGET
-        {0xA1, 0x00000000},  // XACTUAL = 0: initialize current ramp-generator position to zero
-        {0x21, 0x00000000}  // Queue XACTUAL read so the next position poll returns a valid value
+        {0xA1, 0x00000000}  // XACTUAL = 0: initialize current ramp-generator position to zero
     }};
 }
 
 }
 
-#define check_status(command) status = command; if (status != HAL_OK) { return status; }
-
-class StepperMotorSPI : public StepperBase {
+class StepperMotorSPI : public StepperBase, protected SPIMixin {
 protected:
     StepperSPIConfig config;
     const tmc5160::RegisterConfig register_config;
-    arm_atomic(bool) _is_on = false;
     arm_atomic(int32_t) position;
 
     template <size_t N>
     HAL_StatusTypeDef send_register_writes(const std::array<tmc5160::RegisterWrite, N>& register_writes) {
-        uint32_t recv;
-        HAL_StatusTypeDef status;
         for (const auto& register_write : register_writes) {
-            check_status(send_recieve_data(register_write.address, register_write.value, &recv))
+            if (write_register(register_write.address, register_write.value) != HAL_OK) {
+                return HAL_ERROR;
+            }
         }
         return HAL_OK;
+    }
+
+    HAL_StatusTypeDef transfer_datagram(uint8_t address, uint32_t value, uint8_t* spi_status, uint32_t* out) {
+        const uint8_t tx_buffer[5] = {
+            address,
+            static_cast<uint8_t>((value >> 24) & 0xFF),
+            static_cast<uint8_t>((value >> 16) & 0xFF),
+            static_cast<uint8_t>((value >> 8) & 0xFF),
+            static_cast<uint8_t>(value & 0xFF)
+        };
+        uint8_t rx_buffer[5] = {};
+
+        config.spi_ss.reset();
+        delay_cpu_cycles(CYCLES_100NS_160Mhz * 10 * 11);
+        const HAL_StatusTypeDef status = spi_transmit_receive_buffer8(tx_buffer, rx_buffer, sizeof(tx_buffer));
+        config.spi_ss.set();
+        if (status != HAL_OK) {
+            return status;
+        }
+
+        if (spi_status != nullptr) {
+            *spi_status = rx_buffer[0];
+        }
+        if (out != nullptr) {
+            *out = (static_cast<uint32_t>(rx_buffer[1]) << 24)
+                | (static_cast<uint32_t>(rx_buffer[2]) << 16)
+                | (static_cast<uint32_t>(rx_buffer[3]) << 8)
+                | static_cast<uint32_t>(rx_buffer[4]);
+        }
+        return HAL_OK;
+    }
+
+    HAL_StatusTypeDef write_register(uint8_t address, uint32_t value) {
+        return transfer_datagram(address, value, nullptr, nullptr);
+    }
+
+    HAL_StatusTypeDef read_register(uint8_t address, uint32_t* out) {
+        uint8_t spi_status = 0;
+        uint32_t discard = 0;
+        HAL_StatusTypeDef status = transfer_datagram(address, 0x00000000, &spi_status, &discard);
+        if (status != HAL_OK) {
+            return status;
+        }
+        return transfer_datagram(address, 0x00000000, &spi_status, out);
     }
 public:
     StepperMotorSPI(
@@ -192,6 +231,7 @@ public:
         const tmc5160::RegisterConfig& register_config = {}
     ):
         StepperBase(std::forward<GpioPin&&>(enn_pin)),
+        SPIMixin(driver.spi),
         config(std::move(driver)),
         register_config(register_config)
     {};
@@ -200,46 +240,11 @@ public:
         return position;
     }
 
-    HAL_StatusTypeDef send_recieve_data(uint8_t address, uint32_t in, uint32_t* out) {
-        uint8_t tx_buffer[4];
-        uint8_t rx_buffer[4];
-        tx_buffer[0] = (in >> 24) & 0xFF;
-        tx_buffer[1] = (in >> 16) & 0xFF;
-        tx_buffer[2] = (in >> 8) & 0xFF;
-        tx_buffer[3] = in & 0xFF;
-
-        HAL_StatusTypeDef status;
-
-        config.spi_ss.reset();
-        delay_cpu_cycles(CYCLES_100NS_160Mhz * 10 * 11);
-        while (!LL_SPI_IsActiveFlag_TXE(config.spi->Instance)) {}
-        check_status(HAL_SPI_Transmit(config.spi, &address, 1, HAL_MAX_DELAY))
-
-        while (!LL_SPI_IsActiveFlag_TXE(config.spi->Instance)) {}
-        check_status(HAL_SPI_TransmitReceive(config.spi, tx_buffer, rx_buffer, 4, HAL_MAX_DELAY))
-        config.spi_ss.set();
-
-        uint32_t received_data = 0;
-        received_data |= (uint32_t)rx_buffer[0] << 24;
-        received_data |= (uint32_t)rx_buffer[1] << 16;
-        received_data |= (uint32_t)rx_buffer[2] << 8;
-        received_data |= (uint32_t)rx_buffer[3];
-        *out = received_data;
-
-        while (LL_SPI_IsActiveFlag_BSY(config.spi->Instance)) {}
-        return HAL_OK;
-    }
-
     void update_position() {
-        uint32_t discard = 0;
         uint32_t raw_position = 0;
-
-        // TMC5160 SPI reads are pipelined: the first transaction queues the XACTUAL read,
-        // the second transaction returns its value. A previous write (for example XTARGET)
-        // invalidates any earlier queued read, so this must be done on every poll.
-        send_recieve_data(0x21, 0x00000000, &discard);
-        send_recieve_data(0x21, 0x00000000, &raw_position);
-        position = std::bit_cast<int32_t>(raw_position);
+        if (read_register(0x21, &raw_position) == HAL_OK) {
+            position = std::bit_cast<int32_t>(raw_position);
+        }
     }
 
     virtual HAL_StatusTypeDef send_config() {
@@ -250,13 +255,15 @@ public:
     HAL_StatusTypeDef init() override {
         config.sd_mode.reset();
         config.spi_mode.set();
+        if (!LL_SPI_IsEnabled(config.spi->Instance)) {
+            LL_SPI_Enable(config.spi->Instance);
+        }
         HAL_Delay(150);
         return send_config();
     }
 
     virtual void set_target(int32_t value) {
-        uint32_t recv;
-        send_recieve_data(0xAD, std::bit_cast<uint32_t>(value), &recv);
+        write_register(0xAD, std::bit_cast<uint32_t>(value));
     }
 
     void update() override {
