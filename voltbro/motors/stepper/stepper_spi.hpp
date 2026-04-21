@@ -351,6 +351,8 @@ public:
     }
 
     HAL_StatusTypeDef init() override {
+        static_cast<void>(stop());
+        config.spi_ss.set();
         config.sd_mode.reset();
         config.spi_mode.set();
         if (!LL_SPI_IsEnabled(config.spi->Instance)) {
