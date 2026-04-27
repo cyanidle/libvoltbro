@@ -202,7 +202,7 @@ struct Diagnostics {
 class StepperMotorSPI : public StepperBase, protected SPIMixin {
 protected:
     StepperSPIConfig config;
-    const tmc5160::RegisterConfig register_config;
+    tmc5160::RegisterConfig register_config;
     arm_atomic(int32_t) position;
     arm_atomic(uint8_t) last_spi_status = 0;
     arm_atomic(uint32_t) last_gstat = 0;
@@ -348,6 +348,21 @@ public:
     virtual HAL_StatusTypeDef send_config() {
         const auto register_writes = tmc5160::build_register_config(register_config);
         return send_register_writes(register_writes);
+    }
+
+    HAL_StatusTypeDef set_current_scale(uint8_t ihold, uint8_t irun) {
+        tmc5160::detail::runtime_check(ihold <= 31);
+        tmc5160::detail::runtime_check(irun <= 31);
+        register_config.ihold = ihold;
+        register_config.irun = irun;
+        return write_register(
+            0x90,
+            tmc5160::detail::pack_ihold_irun(
+                register_config.ihold,
+                register_config.irun,
+                register_config.iholddelay
+            )
+        );
     }
 
     HAL_StatusTypeDef init() override {
