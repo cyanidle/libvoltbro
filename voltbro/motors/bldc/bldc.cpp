@@ -30,12 +30,18 @@ HAL_StatusTypeDef BLDCController::init() {
 }
 
 HAL_StatusTypeDef BLDCController::stop() {
+    // Always reset control to a neutral voltage target before disabling the bridge.
+    // This prevents stale POSITION/VELOCITY/TORQUE/UNIVERSAL set-points from being reused
+    // on the next enable cycle.
+    (void)set_voltage_point(0.0f);
     drive_info.en_pin.reset();
     _is_on = false;
     return HAL_OK;
 }
 
 HAL_StatusTypeDef BLDCController::start() {
+    // Start from a neutral control target to avoid immediate re-application of stale commands.
+    (void)set_voltage_point(0.0f);
     for (int i = 0; i < 3; i++) {
         drive_info.en_pin.reset();
         HAL_Delay(10);
