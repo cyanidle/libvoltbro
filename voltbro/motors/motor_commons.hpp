@@ -19,7 +19,7 @@ struct CommonDriverConfig {
 
 constexpr float FLOAT_INF = std::numeric_limits<float>::infinity();
 
-struct DriveLimits {
+struct DriveRuntimeConfig {
     float current_limit = NAN;  // Real current limit for operation, can be modified by stall detection, etc.
 
     float user_current_limit = NAN;
@@ -33,7 +33,7 @@ struct DriveLimits {
 
 class AbstractMotor {
 protected:
-    DriveLimits drive_limits;
+    DriveRuntimeConfig drive_runtime_config;
     AbstractMotor() {}
 public:
     virtual HAL_StatusTypeDef init() = 0;
@@ -42,35 +42,38 @@ public:
     virtual HAL_StatusTypeDef set_state(bool) = 0;
     virtual void update() = 0;
 
-    virtual HAL_StatusTypeDef apply_limits() {
-        if (std::isnan(drive_limits.current_limit)) {
-            drive_limits.current_limit = drive_limits.user_current_limit;
+    virtual HAL_StatusTypeDef apply_runtime_config() {
+        if (std::isnan(drive_runtime_config.current_limit)) {
+            drive_runtime_config.current_limit = drive_runtime_config.user_current_limit;
         }
         return HAL_OK;
     };
 
-    virtual bool check_limits(const DriveLimits& limits) {
-        if (!std::isnan(limits.user_position_lower_limit) && !std::isnan(limits.user_position_upper_limit) &&
-            limits.user_position_upper_limit < limits.user_position_lower_limit) {
+    virtual bool check_runtime_config(const DriveRuntimeConfig& runtime_config) {
+        if (
+            !std::isnan(runtime_config.user_position_lower_limit) &&
+            !std::isnan(runtime_config.user_position_upper_limit) &&
+            runtime_config.user_position_upper_limit < runtime_config.user_position_lower_limit
+        ) {
             return false;
         }
         return true;
     }
 
-    bool set_limits(const DriveLimits& limits) {
-        if (!check_limits(limits)) {
+    bool set_runtime_config(const DriveRuntimeConfig& runtime_config) {
+        if (!check_runtime_config(runtime_config)) {
             return false;
         }
-        drive_limits = limits;
-        auto result = apply_limits();
+        drive_runtime_config = runtime_config;
+        auto result = apply_runtime_config();
         if (result != HAL_OK) {
             return false;
         }
         return true;
     }
 
-    const DriveLimits& get_limits() const {
-        return drive_limits;
+    const DriveRuntimeConfig& get_runtime_config() const {
+        return drive_runtime_config;
     }
 };
 

@@ -9,13 +9,13 @@
 
 #include "voltbro/math/transform.hpp"
 
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
 struct FOCProfile {
+    volatile uint32_t total = 0;
     volatile uint32_t sensors = 0;
     volatile uint32_t currents = 0;
     volatile uint32_t outer_loop = 0;
     volatile uint32_t pwm = 0;
-    volatile uint32_t total = 0;
 };
 static volatile FOCProfile foc_profile;
 
@@ -50,7 +50,6 @@ volatile float value_foc_p_kp = 0;
 volatile float value_foc_v_kp = 0;
 volatile float value_foc_t = 0;
 volatile encoder_data raw_value = 0;
-volatile float value_control_velocity = 0;
 #endif
 
 void FOC::update_angle() {
@@ -77,7 +76,7 @@ void FOC::update_angle() {
 }
 
 void FOC::apply_kalman() {
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     const uint32_t start_total = DWT->CYCCNT;
     uint32_t t_start = DWT->CYCCNT;
 #endif
@@ -94,7 +93,7 @@ void FOC::apply_kalman() {
     } else if (travel > PI) {
         travel -= pi2;
     }
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     kalman_profile.start = DWT->CYCCNT - t_start;
     t_start = DWT->CYCCNT;
 #endif
@@ -126,7 +125,7 @@ void FOC::apply_kalman() {
     W_hat = nW + filters_config.g2 * travel;
     E_hat = nE + filters_config.g3 * travel;
 //#pragma endregion KALMAN_PAPER
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     kalman_profile.mid = DWT->CYCCNT - t_start;
     t_start = DWT->CYCCNT;
 #endif
@@ -136,7 +135,7 @@ void FOC::apply_kalman() {
     shaft_velocity = nW / drive_info.common.gear_ratio;
 
     prev_angle = nTh;
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     kalman_profile.end = DWT->CYCCNT - t_start;
     kalman_profile.total = DWT->CYCCNT - start_total;
 #endif
@@ -157,32 +156,23 @@ void FOC::update_shaft_angle() {
 }
 
 void FOC::update_sensors() {
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     const uint32_t start_total = DWT->CYCCNT;
     uint32_t t_start = DWT->CYCCNT;
 #endif
     inverter.update();
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     sensors_profile.inverter = DWT->CYCCNT - t_start;
     t_start = DWT->CYCCNT;
 #endif
     update_angle();
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     sensors_profile.angle = DWT->CYCCNT - t_start;
     t_start = DWT->CYCCNT;
 #endif
     apply_kalman();
     update_shaft_angle();
-    if (!is_control_velocity_initialized) {
-        control_velocity = get_velocity();
-        is_control_velocity_initialized = true;
-    } else {
-        control_velocity = velocity_lpf(control_velocity, get_velocity());
-    }
-    #ifdef MONITOR
-    value_control_velocity = control_velocity;
-    #endif
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     sensors_profile.kalman = DWT->CYCCNT - t_start;
     sensors_profile.total = DWT->CYCCNT - start_total;
 #endif
@@ -190,12 +180,12 @@ void FOC::update_sensors() {
 
 
 void FOC::update() {
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     const uint32_t start_total = DWT->CYCCNT;
     uint32_t t_start = DWT->CYCCNT;
 #endif
     update_sensors();
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     foc_profile.sensors = DWT->CYCCNT - t_start;
 #endif
 
@@ -223,7 +213,7 @@ void FOC::update() {
     float V_d, V_q;
     static float I_D = 0;
     #endif
-    #ifdef FOC_PROFILE
+    #ifdef FOC_PROFILE_DETAILED
     t_start = DWT->CYCCNT;
     #endif
     // LPF for motor current
@@ -235,7 +225,7 @@ void FOC::update() {
 
     I_D = I_D - (filters_config.I_lpf_coefficient * diff_D);
     I_Q = I_Q - (filters_config.I_lpf_coefficient * diff_Q);
-    #ifdef FOC_PROFILE
+    #ifdef FOC_PROFILE_DETAILED
     foc_profile.currents = DWT->CYCCNT - t_start;
     #endif
 
@@ -245,7 +235,6 @@ void FOC::update() {
     shaft_torque = I_Q * drive_info.torque_const * gear_ratio_f;
 
     if (point_type == SetPointType::VOLTAGE) {
-        i_q_set_slewed = 0.0f;
         V_d = 0;
         V_q = target;
     }
@@ -259,7 +248,7 @@ void FOC::update() {
         V_d = std::clamp(d_response, -busV, busV);
 
         i_q_set = 0.0f;
-        #ifdef FOC_PROFILE
+        #ifdef FOC_PROFILE_DETAILED
         t_start = DWT->CYCCNT;
         #endif
         if (point_type == SetPointType::UNIVERSAL) {
@@ -272,7 +261,7 @@ void FOC::update() {
             #endif
             i_q_set = 1.0f / drive_info.torque_const * (
                 foc_target.angle_kp * (foc_target.angle - get_angle()) +
-                foc_target.velocity_kp * (foc_target.velocity - control_velocity) +
+                foc_target.velocity_kp * (foc_target.velocity - get_velocity()) +
                 (foc_target.torque / gear_ratio_f)
             );
         }
@@ -285,7 +274,7 @@ void FOC::update() {
                 control_error = target - get_angle();
             }
             else if (point_type == SetPointType::VELOCITY) {
-                control_error = target - control_velocity;
+                control_error = target - get_velocity();
             }
             float controller_response = control_reg.regulation(control_error, T, false);
             #ifdef MONITOR
@@ -300,38 +289,27 @@ void FOC::update() {
             i_q_set = copysign(abs_max_current_from_torque, i_q_set);
         }
         if (
-            drive_limits.current_limit > 0.0f &&
-            (fabs(i_q_set) > fabs(drive_limits.current_limit))
+            drive_runtime_config.current_limit > 0.0f &&
+            (fabs(i_q_set) > fabs(drive_runtime_config.current_limit))
         ) {
-            i_q_set = copysign(drive_limits.current_limit, i_q_set);
+            i_q_set = copysign(drive_runtime_config.current_limit, i_q_set);
         }
         // absolute limit on currents defined by the hardware safe operation region
         if (fabs(i_q_set) > 30.0f) {
             i_q_set = copysign(30.0f, i_q_set);
         }
-        if (filters_config.i_q_slew_rate > 0.0f) {
-            const float max_i_q_delta = filters_config.i_q_slew_rate * T;
-            const float i_q_delta = std::clamp(
-                i_q_set - i_q_set_slewed,
-                -max_i_q_delta,
-                max_i_q_delta
-            );
-            i_q_set_slewed += i_q_delta;
-        } else {
-            i_q_set_slewed = i_q_set;
-        }
 
-        i_q_error = i_q_set_slewed - I_Q;
+        i_q_error = i_q_set - I_Q;
         q_response = q_reg.regulation(i_q_error, T, busV);
         V_q = q_response;
-        #ifdef FOC_PROFILE
+        #ifdef FOC_PROFILE_DETAILED
         foc_profile.outer_loop = DWT->CYCCNT - t_start;
         #endif
     }
 
     limit_norm(&V_d, &V_q, busV);
 
-    #ifdef FOC_PROFILE
+    #ifdef FOC_PROFILE_DETAILED
     t_start = DWT->CYCCNT;
     #endif
     float v_u = 0, v_v = 0, v_w = 0;
@@ -347,11 +325,11 @@ void FOC::update() {
     DQs[2] = (uint16_t)(float(full_pwm + 1) * dtc_w);
 
     set_pwm();
-    #ifdef FOC_PROFILE
+    #ifdef FOC_PROFILE_DETAILED
     foc_profile.pwm = DWT->CYCCNT - t_start;
     #endif
 
-#ifdef FOC_PROFILE
+#ifdef FOC_PROFILE_DETAILED
     foc_profile.total = DWT->CYCCNT - start_total;
 #endif
 }
