@@ -13,19 +13,19 @@
 class StepperBase : public AbstractMotor {
 protected:
     arm_atomic(bool) _is_on = false;
-    GpioPin enn_pin;
+    GpioPin en_pin;
 public:
-    StepperBase(GpioPin&& enn_pin):
+    StepperBase(GpioPin&& en_pin):
         AbstractMotor(),
-        enn_pin(std::move(enn_pin))
+        en_pin(std::move(en_pin))
     {}
 
     HAL_StatusTypeDef set_state(bool state) override{
         if (state) {
-            enn_pin.reset();
+            en_pin.reset();
         }
         else {
-            enn_pin.set();
+            en_pin.set();
         }
         _is_on = state;
         return HAL_OK;
