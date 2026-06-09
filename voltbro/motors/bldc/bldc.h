@@ -44,7 +44,7 @@ struct DriveInfo {
 
 
 /*
- * Base for BLDC motors. Controls PWM, stall detection, current sensing, limits
+ * Base for BLDC motors. Controls PWM, stall detection, current sensing, and runtime config
  */
 class BLDCController: public AbstractMotor {
 protected:
@@ -57,18 +57,18 @@ protected:
     }
 
     FORCE_INLINE float get_torque_limit_from_current() const {
-        if (!is_symmetric_limit_set(drive_limits.user_current_limit)) {
+        if (!is_symmetric_limit_set(drive_runtime_config.user_current_limit)) {
             return NAN;
         }
-        return drive_limits.user_current_limit * drive_info.torque_const *
+        return drive_runtime_config.user_current_limit * drive_info.torque_const *
                static_cast<float>(drive_info.common.gear_ratio);
     }
 
     FORCE_INLINE float get_effective_torque_limit() const {
         const float torque_from_current = get_torque_limit_from_current();
         const float torque_from_limit =
-            is_symmetric_limit_set(drive_limits.user_torque_limit) ?
-                drive_limits.user_torque_limit :
+            is_symmetric_limit_set(drive_runtime_config.user_torque_limit) ?
+                drive_runtime_config.user_torque_limit :
                 NAN;
 
         if (std::isnan(torque_from_limit)) {
@@ -81,8 +81,8 @@ protected:
     }
 
     FORCE_INLINE bool is_angle_target_valid(float angle) const {
-        const float lower = drive_limits.user_position_lower_limit;
-        const float upper = drive_limits.user_position_upper_limit;
+        const float lower = drive_runtime_config.user_position_lower_limit;
+        const float upper = drive_runtime_config.user_position_upper_limit;
         if (std::isfinite(lower) && (angle < lower)) {
             return false;
         }
@@ -93,7 +93,7 @@ protected:
     }
 
     FORCE_INLINE bool is_velocity_target_valid(float velocity) const {
-        return is_within_symmetric_limit(velocity, drive_limits.user_speed_limit);
+        return is_within_symmetric_limit(velocity, drive_runtime_config.user_speed_limit);
     }
 
     FORCE_INLINE bool is_torque_target_valid(float torque) const {
@@ -101,7 +101,7 @@ protected:
     }
 
     FORCE_INLINE float get_direction_multiplier() const {
-        return static_cast<float>(drive_limits.user_angle_direction);
+        return static_cast<float>(drive_runtime_config.user_angle_direction);
     }
 
     const DriveInfo drive_info;
@@ -120,7 +120,7 @@ protected:
     uint16_t DQs[3] = {0, 0, 0};
 public:
     BLDCController(
-        const DriveLimits& limits,
+        const DriveRuntimeConfig& runtime_config,
         const DriveInfo& drive_info,
         TIM_HandleTypeDef* htim,
         BaseInverter& inverter
@@ -131,43 +131,43 @@ public:
         full_pwm(htim->Instance->ARR),
         htim(htim)
     {
-        if (!set_limits(limits)) {
+        if (!set_runtime_config(runtime_config)) {
             exit(-1);
         }
     }
 
-    virtual bool check_limits(const DriveLimits& limits) override {
-        if ((limits.user_angle_direction != -1) && (limits.user_angle_direction != 1)) {
+    virtual bool check_runtime_config(const DriveRuntimeConfig& runtime_config) override {
+        if ((runtime_config.user_angle_direction != -1) && (runtime_config.user_angle_direction != 1)) {
             return false;
         }
         if (
-            std::isfinite(limits.user_speed_limit) &&
-            (limits.user_speed_limit < 0.0f)
+            std::isfinite(runtime_config.user_speed_limit) &&
+            (runtime_config.user_speed_limit < 0.0f)
         ) {
             return false;
         }
         if (
-            std::isfinite(limits.user_current_limit) &&
-            (limits.user_current_limit > drive_info.max_current)
+            std::isfinite(runtime_config.user_current_limit) &&
+            (runtime_config.user_current_limit > drive_info.max_current)
         ) {
             return false;
         }
         if (
-            std::isfinite(limits.user_torque_limit) &&
-            (limits.user_torque_limit > drive_info.max_torque)
+            std::isfinite(runtime_config.user_torque_limit) &&
+            (runtime_config.user_torque_limit > drive_info.max_torque)
         ) {
             return false;
         }
-        return AbstractMotor::check_limits(limits);
+        return AbstractMotor::check_runtime_config(runtime_config);
     }
-    virtual HAL_StatusTypeDef apply_limits() override {
-        if (std::isnan(drive_limits.user_current_limit) || drive_limits.user_current_limit <= 0) {
-            drive_limits.user_current_limit = drive_info.max_current;
+    virtual HAL_StatusTypeDef apply_runtime_config() override {
+        if (std::isnan(drive_runtime_config.user_current_limit) || drive_runtime_config.user_current_limit <= 0) {
+            drive_runtime_config.user_current_limit = drive_info.max_current;
         }
-        if (std::isnan(drive_limits.user_torque_limit) || drive_limits.user_torque_limit <= 0) {
-            drive_limits.user_torque_limit = drive_info.max_torque;
+        if (std::isnan(drive_runtime_config.user_torque_limit) || drive_runtime_config.user_torque_limit <= 0) {
+            drive_runtime_config.user_torque_limit = drive_info.max_torque;
         }
-        return AbstractMotor::apply_limits();
+        return AbstractMotor::apply_runtime_config();
     }
 
     FORCE_INLINE virtual bool set_angle_point(float angle) {
@@ -210,7 +210,7 @@ public:
         return _is_on;
     }
     FORCE_INLINE float get_angle() const {
-        return shaft_angle * get_direction_multiplier() + drive_limits.user_angle_offset;
+        return shaft_angle * get_direction_multiplier() + drive_runtime_config.user_angle_offset;
     }
     FORCE_INLINE float get_velocity() const {
         return shaft_velocity * get_direction_multiplier();

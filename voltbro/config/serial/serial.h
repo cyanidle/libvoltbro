@@ -103,7 +103,7 @@ struct __attribute__((packed)) BaseConfigData {
     FDCANDataBaud fdcan_data_baud = FDCANDataBaud::KHz8000;
     uint32_t type_id = BaseConfigData::TYPE_ID;
 
-    virtual bool are_required_params_set() {
+    bool are_required_params_set() const {
         return node_id != 0;
     }
 };

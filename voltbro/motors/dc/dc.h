@@ -46,7 +46,7 @@ private:
 public:
     DCMotorController(
         const DCDriverConfig& driver_config,
-        const DriveLimits& limits,
+        const DriveRuntimeConfig& runtime_config,
         GenericEncoder& encoder,
         bool is_using_brake = false
     ):
@@ -55,12 +55,12 @@ public:
         encoder(encoder),
         is_using_brake(is_using_brake)
     {
-        set_limits(limits);
+        set_runtime_config(runtime_config);
     };
 
     HAL_StatusTypeDef init() override;
     HAL_StatusTypeDef set_state(bool) override;
-    virtual HAL_StatusTypeDef apply_limits() override;
+    virtual HAL_StatusTypeDef apply_runtime_config() override;
     void update() override;
     void set_pulse(float pwm);
 

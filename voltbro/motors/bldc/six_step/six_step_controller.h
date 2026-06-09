@@ -15,14 +15,14 @@ private:
     HallSensor& hall_sensor;
 public:
     SixStepController(
-        DriveLimits& limits,
+        DriveRuntimeConfig& runtime_config,
         DriveInfo& drive_info,
         TIM_HandleTypeDef* htim,
         BaseInverter& inverter,
         HallSensor& hall_sensor
     ):
         BLDCController(
-            limits,
+            runtime_config,
             drive_info,
             htim,
             inverter

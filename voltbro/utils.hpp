@@ -79,7 +79,7 @@ inline bool is_close(float x, float y, float tolerance) {
 template <class T>
 class ReservedObject {
 private:
-    unsigned char buffer[sizeof(T)];
+    alignas(T) unsigned char buffer[sizeof(T)];
     T* obj;
 public:
     template <class... Args>

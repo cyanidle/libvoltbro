@@ -332,7 +332,7 @@ public:
         FiltersConfig&& filters_config,
         PIDConfig&& q_config,
         PIDConfig&& d_config,
-        const DriveLimits& drive_limits,
+        const DriveRuntimeConfig& drive_runtime_config,
         const DriveInfo& drive_info,
         TIM_HandleTypeDef* htim,
         AS5047P& encoder,
@@ -346,7 +346,7 @@ public:
             std::move(filters_config),
             std::move(q_config),
             std::move(d_config),
-            drive_limits,
+            drive_runtime_config,
             drive_info,
             htim,
             encoder,
@@ -417,7 +417,6 @@ public:
 
         HAL_StatusTypeDef stop() override {
             _is_on = false;
-            i_q_set_slewed = 0.0f;
             bootstrap_charge_deadline_ms = 0;
             __HAL_TIM_MOE_DISABLE(htim);
 
@@ -430,7 +429,6 @@ public:
 
         HAL_StatusTypeDef start() override {
             bootstrap_charge_deadline_ms = HAL_GetTick() + bootstrap_charge_time_ms;
-            i_q_set_slewed = 0.0f;
 
             HAL_StatusTypeDef result = gate_driver.wake();
             if (result != HAL_OK) {
