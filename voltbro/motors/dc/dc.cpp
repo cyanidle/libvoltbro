@@ -1,4 +1,4 @@
-#if defined(STM32G474xx) || defined(STM32_G)
+#if defined(STM32G4) || defined(STM32_G)
 #include "dc.h"
 #if defined(HAL_DAC_MODULE_ENABLED) && defined(HAL_TIM_MODULE_ENABLED)
 
@@ -20,8 +20,8 @@ HAL_StatusTypeDef DCMotorController::set_state(bool state) {
     return HAL_OK;
 }
 
-HAL_StatusTypeDef DCMotorController::apply_limits() {
-    Ipeak = limits.current_limit;
+HAL_StatusTypeDef DCMotorController::apply_runtime_config() {
+    Ipeak = drive_runtime_config.current_limit;
     double Vref = Ipeak * config.Rsense * 10 * 2;
     uint32_t dac_val = dac_value(Vref);
     auto state = HAL_DAC_SetValue(
@@ -33,7 +33,7 @@ HAL_StatusTypeDef DCMotorController::apply_limits() {
     if (state != HAL_OK) {
         return state;
     }
-    return AbstractMotor<BLDCController>::apply_limits();
+    return AbstractMotor::apply_runtime_config();
 };
 
 void DCMotorController::set_pulse(float pwm) {

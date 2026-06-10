@@ -1,5 +1,5 @@
 #pragma once
-#if defined(STM32G474xx) || defined(STM32_G)
+#if defined(STM32G4) || defined(STM32_G)
 
 #ifdef __cplusplus
 extern "C" {

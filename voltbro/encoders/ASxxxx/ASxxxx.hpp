@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(STM32G474xx) || defined(STM32_G)
+#if defined(STM32G4) || defined(STM32_G)
 #include "stm32g4xx_hal.h"
 #ifdef HAL_SPI_MODULE_ENABLED
 
@@ -9,33 +9,19 @@
 #include "voltbro/encoders/generic.h"
 #include "voltbro/utils.hpp"
 #include "voltbro/devices/gpio.hpp"
+#include "voltbro/generics/spi_mixin.hpp"
 
 template<class ASxxxxParams>
-class ASxxxx: public GenericEncoder {
+class ASxxxx: public GenericEncoder, public SPIMixin {
 private:
     GpioPin spi_ss;
-    SPI_HandleTypeDef* const spi;
 
-    HAL_StatusTypeDef spi_transmit_command(uint16_t command) {
-        return HAL_SPI_Transmit(spi, (uint8_t*)&command, 1, 1000);
-    }
-
-    __attribute__((always_inline)) inline void start_transaction() {
+    FORCE_INLINE void start_transaction() {
         spi_ss.reset();
     }
 
-    __attribute__((always_inline)) inline void end_transaction() {
+    FORCE_INLINE void end_transaction() {
         spi_ss.set();
-    }
-
-    uint16_t spi_transmit_command_receive(uint16_t command) {
-        uint16_t response;
-        HAL_StatusTypeDef transmit_status =
-                HAL_SPI_TransmitReceive(spi, (uint8_t*)&command, (uint8_t*)&response, 1, 1000);
-        if (transmit_status != HAL_OK) {
-            // TODO?
-        }
-        return response;
     }
 
     uint16_t get_command(ASxxxxParams reg) {
@@ -60,11 +46,9 @@ private:
         return command;
     }
 
-    uint16_t read(ASxxxxParams reg, bool recieve_immediate = false) {
-        uint16_t command = get_command(reg);
-
+    uint16_t read(bool recieve_immediate = false) {
         start_transaction();
-        uint16_t response = spi_transmit_command_receive(command);
+        uint16_t response = spi_transmit_command_receive(to_underlying(ASxxxxParams::READ_MESSAGE));
         end_transaction();
 
         if (!recieve_immediate) {
@@ -82,7 +66,7 @@ private:
     }
 
     encoder_data get_angle(bool recieve_immediate = true) {
-        uint16_t angle = read(ASxxxxParams::REG_ANGLE, recieve_immediate);
+        uint16_t angle = read(recieve_immediate);
         if (is_inverted) {
             angle = CPR - angle;
         }
@@ -98,14 +82,20 @@ public:
         encoder_data electric_offset = 0
     ):
         GenericEncoder(CPR, is_inverted, false, electric_offset),
-        spi_ss(std::move(spi_ss)),
-        spi(spi)
+        SPIMixin(spi),
+        spi_ss(std::move(spi_ss))
     {
         value = (encoder_data)-1;
     };
 
     void start_streaming() {
-        get_angle(true);  // skip first (empty) SPI response, without sending NOP
+        // Warm up encoder
+        for (size_t i = 0; i < 5; i++) {
+            start_transaction();
+            spi_transmit_only(get_command(ASxxxxParams::REG_ANGLE));
+            end_transaction();
+            delay_cpu_cycles(to_underlying(ASxxxxParams::CS_DELAY_CYCLES));
+        }
     }
 
     void update_value() override {
@@ -128,6 +118,16 @@ public:
         }
 
         value = new_value;
+    }
+
+    HAL_StatusTypeDef init() override {
+        HAL_StatusTypeDef result = GenericEncoder::init();
+        if (result != HAL_OK) {
+            return result;
+        }
+        LL_SPI_Enable(spi->Instance);
+        start_streaming();
+        return HAL_OK;
     }
 };
 

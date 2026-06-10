@@ -1,5 +1,5 @@
 #pragma once
-#if defined(STM32G474xx) || defined(STM32_G)
+#if defined(STM32G4) || defined(STM32_G)
 #include "stm32g4xx_hal.h"
 
 #include <cstdint>
@@ -39,17 +39,19 @@ public:
         return HAL_OK;
     }
     virtual void update_value() {}
-    virtual inline encoder_data get_value() const {
+
+    virtual FORCE_INLINE encoder_data get_value() const {
         return value;
     };
 
-    inline void incr_revolutions() {
+    FORCE_INLINE void incr_revolutions() {
         revolutions++;
     }
-    inline void decr_revolutions() {
+    FORCE_INLINE void decr_revolutions() {
         revolutions--;
     }
-    inline int get_revolutions() const{
+
+    FORCE_INLINE int get_revolutions() const{
         return revolutions;
     }
 

@@ -1,7 +1,7 @@
 #include "hall_sensor.h"
-#if defined(STM32G474xx) || defined(STM32_G)
+#if defined(STM32G4) || defined(STM32_G)
 
-force_inline bool get_pin_state(const GPIO_TypeDef* gpiox, pin p) {
+static FORCE_INLINE bool get_pin_state(const GPIO_TypeDef* gpiox, pin p) {
     return HAL_GPIO_ReadPin((GPIO_TypeDef *) gpiox, p) == GPIO_PIN_SET;
 }
 
@@ -42,7 +42,7 @@ bool HallSensor::handle_hall_channel(pin channel) {
     uint8_t activated_pin;
 #endif
 
-    if (IS_EXTI_TRUSTED && channel != (uint16_t) -1) {
+    if (IS_EXTI_TRUSTED && channel != NONE_UINT16) {
         if (pin_1 == channel) {
             activated_pin = 0;
         } else if (pin_2 == channel) {
@@ -69,15 +69,15 @@ bool HallSensor::handle_hall_channel(pin channel) {
             activated_pin = 2;
         }
         else {
-            activated_pin = -1;
+            activated_pin = NONE_UINT8;
         }
     }
 
-    if (activated_pin == -1) {
+    if (activated_pin == NONE_UINT8) {
         return false;
     }
 
-    if (last_activated == -1) {
+    if (last_activated == NONE_UINT8) {
         last_activated = activated_pin;
         step = get_encoder_step();
         return true;
@@ -102,7 +102,7 @@ bool HallSensor::handle_hall_channel(pin channel) {
         direction = -1;
     }
     signed_value += increment * direction;
-    last_activated = (int8_t)activated_pin;
+    last_activated = activated_pin;
 
     if (signed_value >= CPR) {
         signed_value = signed_value - CPR;
@@ -111,7 +111,7 @@ bool HallSensor::handle_hall_channel(pin channel) {
         signed_value = signed_value + CPR;
         decr_revolutions();
     }
-    uint16_t unsigned_value = (uint16_t)signed_value;
+    uint16_t unsigned_value = static_cast<uint16_t>(signed_value);
 
     bool has_changed = value != unsigned_value;
     value = unsigned_value;

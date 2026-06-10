@@ -1,5 +1,5 @@
 #pragma once
-#if defined(STM32G474xx) || defined(STM32_G)
+#if defined(STM32G4) || defined(STM32_G)
 
 #include "stm32g4xx_hal.h"
 #if defined(HAL_DAC_MODULE_ENABLED) && defined(HAL_TIM_MODULE_ENABLED)
@@ -46,21 +46,21 @@ private:
 public:
     DCMotorController(
         const DCDriverConfig& driver_config,
-        const DriveLimits& limits,
+        const DriveRuntimeConfig& runtime_config,
         GenericEncoder& encoder,
         bool is_using_brake = false
     ):
-        AbstractMotor(),  // calls correct check_limits via CRTP
+        AbstractMotor(),
         config(driver_config),
         encoder(encoder),
         is_using_brake(is_using_brake)
     {
-        set_limits(limits);
+        set_runtime_config(runtime_config);
     };
 
     HAL_StatusTypeDef init() override;
     HAL_StatusTypeDef set_state(bool) override;
-    virtual HAL_StatusTypeDef apply_limits() override;
+    virtual HAL_StatusTypeDef apply_runtime_config() override;
     void update() override;
     void set_pulse(float pwm);
 

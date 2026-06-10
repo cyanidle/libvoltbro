@@ -1,24 +1,70 @@
-#include "foc.h"
+#if defined(STM32G4) || defined(STM32_G)
+#include "stm32g4xx_hal.h"
 #if defined(HAL_TIM_MODULE_ENABLED) && defined(HAL_ADC_MODULE_ENABLED) && defined(HAL_CORDIC_MODULE_ENABLED)
 
-#include "arm_math.h"
+#include "foc.hpp"
 
-#include "cordic.h"
+#include "arm_math.h"
 #include "stm32g4xx_ll_cordic.h"
+
 #include "voltbro/math/transform.hpp"
 
-#define MONITOR
+#ifdef FOC_PROFILE_DETAILED
+struct FOCProfile {
+    volatile uint32_t total = 0;
+    volatile uint32_t sensors = 0;
+    volatile uint32_t currents = 0;
+    volatile uint32_t outer_loop = 0;
+    volatile uint32_t pwm = 0;
+};
+static volatile FOCProfile foc_profile;
 
-#if defined(DEBUG) || defined(MONITOR)
-volatile float raw_elec_angle_glob = 0;
-volatile float shaft_angle_glob = 0;
+struct SensorsProfile {
+    volatile uint32_t inverter = 0;
+    volatile uint32_t angle = 0;
+    volatile uint32_t kalman = 0;
+    volatile uint32_t total = 0;
+};
+static volatile SensorsProfile sensors_profile;
+
+struct KalmanProfile {
+    volatile uint32_t start = 0;
+    volatile uint32_t mid = 0;
+    volatile uint32_t end = 0;
+    volatile uint32_t total = 0;
+};
+static volatile KalmanProfile kalman_profile;
 #endif
+
+#if defined(MONITOR)
+volatile float I_D = 0;
+volatile float I_Q = 0;
+static float V_d, V_q;
+volatile float i_q_error, i_d_error;
+float d_response, q_response, i_q_set;
+volatile float control_error_glob = 0;
+volatile float controller_response_glob = 0;
+volatile float value_foc_p = 0;
+volatile float value_foc_v = 0;
+volatile float value_foc_p_kp = 0;
+volatile float value_foc_v_kp = 0;
+volatile float value_foc_t = 0;
+volatile encoder_data raw_value = 0;
+#endif
+
 void FOC::update_angle() {
     encoder.update_value();
 
-    encoder_data raw_value = encoder.get_value();
-    int offset_value = (int)raw_value + encoder.electric_offset;  // + lookup_table[raw_value >> 5]
-    offset_value -= (float)encoder.CPR / (2.0f * drive_info.common.ppairs);
+    #ifndef MONITOR
+    encoder_data raw_value;
+    #endif
+    raw_value = encoder.get_value();
+    int offset_value = (int)raw_value - encoder.electric_offset;
+    if (lookup_table != nullptr) {
+        offset_value -= (*lookup_table)[raw_value >> 3];
+    }
+    static const float cpr_offset = (float)encoder.CPR / (2.0f * drive_info.common.ppairs);
+    offset_value -= cpr_offset;
     if(offset_value > (encoder.CPR - 1)) {
         offset_value -= encoder.CPR;
     }
@@ -27,26 +73,13 @@ void FOC::update_angle() {
     }
 
     raw_elec_angle = offset_value * (pi2 / (float)encoder.CPR);
-    #if defined(DEBUG) || defined(MONITOR)
-        raw_elec_angle_glob = raw_elec_angle;
-    #endif
-
-    const float rads_per_rev = pi2 / drive_info.common.gear_ratio;
-    int revolutions = encoder.get_revolutions() % drive_info.common.gear_ratio;
-    float base_angle = 0;
-    if (revolutions < 0) {
-        base_angle = (drive_info.common.gear_ratio + revolutions) * rads_per_rev;
-    }
-    else {
-        base_angle = revolutions * rads_per_rev;
-    }
-    shaft_angle = base_angle + (raw_elec_angle / drive_info.common.gear_ratio);
-    #if defined(DEBUG) || defined(MONITOR)
-        shaft_angle_glob = shaft_angle;
-    #endif
 }
 
 void FOC::apply_kalman() {
+#ifdef FOC_PROFILE_DETAILED
+    const uint32_t start_total = DWT->CYCCNT;
+    uint32_t t_start = DWT->CYCCNT;
+#endif
     static float prev_angle = -pi2 - 2;
 
     if (prev_angle < (-pi2 - 1)) {
@@ -60,8 +93,12 @@ void FOC::apply_kalman() {
     } else if (travel > PI) {
         travel -= pi2;
     }
+#ifdef FOC_PROFILE_DETAILED
+    kalman_profile.start = DWT->CYCCNT - t_start;
+    t_start = DWT->CYCCNT;
+#endif
 
-#pragma region KALMAN_PAPER
+//#pragma region KALMAN_PAPER
     /*
      * Source: "A digital speed filter for motion control drives
      *          with a low resolution position encoder",
@@ -69,17 +106,13 @@ void FOC::apply_kalman() {
      * A. Bellini, S. Bifaretti, S. Constantini
      */
     // TODO: get acceleration from inverter?
-    const float a = 0.0f; // expected acceleration, rad/s^2
-    const float g1 =  0.003785056342917592f;
-    const float g2 = 0.11891101743266574f;
-    const float g3 = 1.5473769821028327f;
     static float Th_hat = 0.0f; // Theta hat, rad
     static float W_hat = 0.0f; // Omega hat, rad/s
     static float E_hat = 0.0f; // Epsilon hat, rad/s^2
 
     // (11)
-    float nTh = Th_hat + W_hat*T + (E_hat + a)*(T*T)/2.0f;
-    float nW = W_hat + (E_hat + a)*T;
+    float nTh = Th_hat + W_hat * T + (E_hat + filters_config.expected_a) * (T*T) / 2.0f;
+    float nW = W_hat + (E_hat + filters_config.expected_a) * T;
     float nE = E_hat;
 
     nTh = mfmod(nTh, pi2);
@@ -88,43 +121,73 @@ void FOC::apply_kalman() {
     }
 
     // (19)
-    Th_hat = nTh + g1*travel;
-    W_hat = nW + g2*travel;
-    E_hat = nE + g3*travel;
-#pragma endregion KALMAN_PAPER
+    Th_hat = nTh + filters_config.g1 * travel;
+    W_hat = nW + filters_config.g2 * travel;
+    E_hat = nE + filters_config.g3 * travel;
+//#pragma endregion KALMAN_PAPER
+#ifdef FOC_PROFILE_DETAILED
+    kalman_profile.mid = DWT->CYCCNT - t_start;
+    t_start = DWT->CYCCNT;
+#endif
 
     const float ab = pi2 / (float)drive_info.common.ppairs;
     elec_angle = (float)drive_info.common.ppairs * mfmod(nTh, ab);
     shaft_velocity = nW / drive_info.common.gear_ratio;
 
     prev_angle = nTh;
+#ifdef FOC_PROFILE_DETAILED
+    kalman_profile.end = DWT->CYCCNT - t_start;
+    kalman_profile.total = DWT->CYCCNT - start_total;
+#endif
 }
 
-#if defined(DEBUG) || defined(MONITOR)
-#define IS_GLOBAL_CONTROL_VARIABLES
-static volatile float I_D = 0;
-static volatile float I_Q = 0;
-float V_d, V_q;
-volatile float elec_angle_glob = 0;
-volatile float mech_angle_glob = 0;
-static volatile float i_q_error, i_d_error;
-static float d_response, q_response, i_q_set;
-static volatile float shart_torque_glob = 0;
-static volatile float shart_velocity_glob = 0;
-#endif
+void FOC::update_shaft_angle() {
+    static float prev_elec_angle = elec_angle;
+    static int32_t elec_turns = 0;
+    float filtered_travel = elec_angle - prev_elec_angle;
+    prev_elec_angle = elec_angle;
+    if (filtered_travel < -PI) {
+        elec_turns += 1;
+    } else if (filtered_travel > PI) {
+        elec_turns -= 1;
+    }
+    float elec_unwrapped = (float)elec_turns * pi2 + elec_angle;
+    shaft_angle = elec_unwrapped / ( (float)drive_info.common.ppairs * drive_info.common.gear_ratio );
+}
 
 void FOC::update_sensors() {
+#ifdef FOC_PROFILE_DETAILED
+    const uint32_t start_total = DWT->CYCCNT;
+    uint32_t t_start = DWT->CYCCNT;
+#endif
     inverter.update();
+#ifdef FOC_PROFILE_DETAILED
+    sensors_profile.inverter = DWT->CYCCNT - t_start;
+    t_start = DWT->CYCCNT;
+#endif
     update_angle();
+#ifdef FOC_PROFILE_DETAILED
+    sensors_profile.angle = DWT->CYCCNT - t_start;
+    t_start = DWT->CYCCNT;
+#endif
     apply_kalman();
-    #if defined(DEBUG) || defined(MONITOR)
-        elec_angle_glob = elec_angle;
-        mech_angle_glob = shaft_angle;
-    #endif
+    update_shaft_angle();
+#ifdef FOC_PROFILE_DETAILED
+    sensors_profile.kalman = DWT->CYCCNT - t_start;
+    sensors_profile.total = DWT->CYCCNT - start_total;
+#endif
 }
 
+
 void FOC::update() {
+#ifdef FOC_PROFILE_DETAILED
+    const uint32_t start_total = DWT->CYCCNT;
+    uint32_t t_start = DWT->CYCCNT;
+#endif
     update_sensors();
+#ifdef FOC_PROFILE_DETAILED
+    foc_profile.sensors = DWT->CYCCNT - t_start;
+#endif
 
     // calculate sin and cos of electrical angle with the help of CORDIC.
     // convert electrical angle from float to q31. electrical theta should be [-pi, pi]
@@ -132,98 +195,145 @@ void FOC::update() {
     // load angle value into CORDIC. Input value is in PIs!
     LL_CORDIC_WriteData(CORDIC, ElecTheta_q31);
 
-    int32_t cosOutput = (int32_t)LL_CORDIC_ReadData(CORDIC);  // Read cosine
-    int32_t sinOutput = (int32_t)LL_CORDIC_ReadData(CORDIC);  // Read sine
-
     // the values are negative to level out [-pi, pi] representation of electrical angle at the CORDIC input
-    float c = -(float32_t)cosOutput / 2147483648.0f;  // convert to float from q31
-    float s = -(float32_t)sinOutput / 2147483648.0f;  // convert to float from q31
+    struct {
+        int32_t cosOutput = -(int32_t)LL_CORDIC_ReadData(CORDIC);  // Read cosine
+        int32_t sinOutput = -(int32_t)LL_CORDIC_ReadData(CORDIC);  // Read sine
+    } elec_angles_q31;
+    struct {
+        float c;
+        float s;
+    } elec_angles;
+    //arm_q31_to_float(&elec_angles_q31.cosOutput, &elec_angles.c, 2);
 
-    #ifndef IS_GLOBAL_CONTROL_VARIABLES
+    elec_angles.c = (float32_t)elec_angles_q31.cosOutput / 2147483648.0f;  // convert to float from q31
+    elec_angles.s = (float32_t)elec_angles_q31.sinOutput / 2147483648.0f;  // convert to float from q31
+
+    #ifndef MONITOR
     float V_d, V_q;
     static float I_D = 0;
-    static float I_Q = 0;
+    #endif
+    #ifdef FOC_PROFILE_DETAILED
+    t_start = DWT->CYCCNT;
     #endif
     // LPF for motor current
     float tempD, tempQ;
     // dq0 transform on currents
-    dq0(s, c, inverter.get_A(), inverter.get_B(), inverter.get_C(), &tempD, &tempQ);
+    dq0(elec_angles.s, elec_angles.c, inverter.get_A(), inverter.get_B(), inverter.get_C(), &tempD, &tempQ);
     const float diff_D = I_D - tempD;
     const float diff_Q = I_Q - tempQ;
 
-    const float LPF_COEFFICIENT = 0.0925f;  // Low-pass filter coefficient
-    I_D = I_D - (LPF_COEFFICIENT * diff_D);
-    I_Q = I_Q - (LPF_COEFFICIENT * diff_Q);
-
-    shaft_torque = I_Q * drive_info.torque_const * (float)drive_info.common.gear_ratio;
-    #ifdef IS_GLOBAL_CONTROL_VARIABLES
-    shart_torque_glob = shaft_torque;
-    shart_velocity_glob = shaft_velocity;
+    I_D = I_D - (filters_config.I_lpf_coefficient * diff_D);
+    I_Q = I_Q - (filters_config.I_lpf_coefficient * diff_Q);
+    #ifdef FOC_PROFILE_DETAILED
+    foc_profile.currents = DWT->CYCCNT - t_start;
     #endif
+
+    const float gear_ratio_f = static_cast<float>(drive_info.common.gear_ratio);
+    const float busV = inverter.get_busV();
+
+    shaft_torque = I_Q * drive_info.torque_const * gear_ratio_f;
 
     if (point_type == SetPointType::VOLTAGE) {
         V_d = 0;
-        V_q = -target;
+        V_q = target;
     }
     else {
-        #ifndef IS_GLOBAL_CONTROL_VARIABLES
+        #ifndef MONITOR
         float i_d_error, i_q_error, d_response, q_response, i_q_set;
         #endif
+
         i_d_error = -I_D;
-        d_response = d_reg.regulation(i_d_error, T);
-        V_d = std::clamp(d_response, -inverter.get_busV(), inverter.get_busV());
+        d_response = d_reg.regulation(i_d_error, T, busV);
+        V_d = std::clamp(d_response, -busV, busV);
 
         i_q_set = 0.0f;
-        if (point_type == SetPointType::TORQUE) {
-            i_q_set = -target / drive_info.torque_const / (float)drive_info.common.gear_ratio;
+        #ifdef FOC_PROFILE_DETAILED
+        t_start = DWT->CYCCNT;
+        #endif
+        if (point_type == SetPointType::UNIVERSAL) {
+            #ifdef MONITOR
+            value_foc_p = foc_target.angle;
+            value_foc_v = foc_target.velocity;
+            value_foc_p_kp = foc_target.angle_kp;
+            value_foc_v_kp = foc_target.velocity_kp;
+            value_foc_t = foc_target.torque;
+            #endif
+            i_q_set = 1.0f / drive_info.torque_const * (
+                foc_target.angle_kp * (foc_target.angle - get_angle()) +
+                foc_target.velocity_kp * (foc_target.velocity - get_velocity()) +
+                (foc_target.torque / gear_ratio_f)
+            );
+        }
+        else if (point_type == SetPointType::TORQUE) {
+            i_q_set = target / drive_info.torque_const / gear_ratio_f;
         }
         else {
             float control_error = 0;
             if (point_type == SetPointType::POSITION) {
-                control_error = target - shaft_angle;
+                control_error = target - get_angle();
             }
             else if (point_type == SetPointType::VELOCITY) {
-                control_error = target - shaft_velocity;
+                control_error = target - get_velocity();
             }
-            i_q_set = control_reg.regulation(control_error, T, false);
+            float controller_response = control_reg.regulation(control_error, T, false);
+            #ifdef MONITOR
+            control_error_glob = control_error;
+            controller_response_glob = controller_response;
+            #endif
+            i_q_set = controller_response * get_direction_multiplier();
         }
 
-        float abs_max_current_from_torque = (drive_info.max_torque / drive_info.torque_const / (float)drive_info.common.gear_ratio);
-        if (abs(i_q_set) > abs_max_current_from_torque) {
+        const float abs_max_current_from_torque = (drive_info.max_torque / drive_info.torque_const / gear_ratio_f);
+        if (fabs(i_q_set) > fabs(abs_max_current_from_torque)) {
             i_q_set = copysign(abs_max_current_from_torque, i_q_set);
         }
         if (
-            drive_limits.current_limit > 0 &&
-            (abs(i_q_set) > abs(drive_limits.current_limit))
+            drive_runtime_config.current_limit > 0.0f &&
+            (fabs(i_q_set) > fabs(drive_runtime_config.current_limit))
         ) {
-            i_q_set = copysign(drive_limits.current_limit, i_q_set);
+            i_q_set = copysign(drive_runtime_config.current_limit, i_q_set);
         }
         // absolute limit on currents defined by the hardware safe operation region
-        if (abs(i_q_set) > 30.0f) {
+        if (fabs(i_q_set) > 30.0f) {
             i_q_set = copysign(30.0f, i_q_set);
         }
 
         i_q_error = i_q_set - I_Q;
-        q_response = q_reg.regulation(i_q_error, T);
-        V_q = std::clamp(q_response, -inverter.get_busV(), inverter.get_busV());
+        q_response = q_reg.regulation(i_q_error, T, busV);
+        V_q = q_response;
+        #ifdef FOC_PROFILE_DETAILED
+        foc_profile.outer_loop = DWT->CYCCNT - t_start;
+        #endif
     }
 
-    limit_norm(&V_d, &V_q, inverter.get_busV());
+    limit_norm(&V_d, &V_q, busV);
 
+    #ifdef FOC_PROFILE_DETAILED
+    t_start = DWT->CYCCNT;
+    #endif
     float v_u = 0, v_v = 0, v_w = 0;
     float dtc_u = 0, dtc_v = 0, dtc_w = 0;
 
     // inverse dq0 transform on voltages
-    abc(s, c, V_d, V_q, &v_u, &v_v, &v_w);
+    abc(elec_angles.s, elec_angles.c, V_d, V_q, &v_u, &v_v, &v_w);
     // space vector modulation
-    svm(inverter.get_busV(), v_u, v_v, v_w, &dtc_u, &dtc_v, &dtc_w);
+    svm(busV, v_u, v_v, v_w, &dtc_u, &dtc_v, &dtc_w);
 
     DQs[0] = (uint16_t)(float(full_pwm + 1) * dtc_u);
     DQs[1] = (uint16_t)(float(full_pwm + 1) * dtc_v);
     DQs[2] = (uint16_t)(float(full_pwm + 1) * dtc_w);
 
     set_pwm();
+    #ifdef FOC_PROFILE_DETAILED
+    foc_profile.pwm = DWT->CYCCNT - t_start;
+    #endif
+
+#ifdef FOC_PROFILE_DETAILED
+    foc_profile.total = DWT->CYCCNT - start_total;
+#endif
 }
 
 
+#endif
 #endif

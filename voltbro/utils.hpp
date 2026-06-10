@@ -25,17 +25,17 @@ typedef uint16_t encoder_data;
 typedef uint32_t millis;
 typedef uint64_t micros;
 
-#define pi2 6.28318530718
+#define pi2 6.28318530718f
 
-#define force_inline __attribute__((always_inline)) static inline
+#define FORCE_INLINE __attribute__((always_inline)) inline
 #define arm_atomic(T) alignas(T) T
 
-force_inline int64_t subtract_64(uint64_t first, uint64_t second) {
+static FORCE_INLINE int64_t subtract_64(uint64_t first, uint64_t second) {
     uint64_t abs_diff = (first > second) ? (first - second): (second - first);
     return (first > second) ? (int64_t)abs_diff : -(int64_t)abs_diff;
 }
 
-#if defined(STM32G474xx) || defined(STM32_G)
+#if defined(STM32G)
 #define CRITICAL_SECTION(code_blk)          \
     uint32_t primask_bit = __get_PRIMASK(); \
     __disable_irq();                        \
@@ -72,10 +72,14 @@ inline bool is_close(float x, float y) {
     return fabsf(x - y) < EPS;
 }
 
+inline bool is_close(float x, float y, float tolerance) {
+    return fabsf(x - y) < tolerance;
+}
+
 template <class T>
 class ReservedObject {
 private:
-    unsigned char buffer[sizeof(T)];
+    alignas(T) unsigned char buffer[sizeof(T)];
     T* obj;
 public:
     template <class... Args>

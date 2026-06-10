@@ -56,7 +56,7 @@ DIP Pins
 
 .. doxygenfile:: six_step_controller.h
 
-.. doxygenfile:: foc.h
+.. doxygenfile:: foc.hpp
 
 Математика
 ----------

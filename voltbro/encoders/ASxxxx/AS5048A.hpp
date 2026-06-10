@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(STM32G474xx) || defined(STM32_G)
+#if defined(STM32G4) || defined(STM32_G)
 #include "stm32g4xx_hal.h"
 #ifdef HAL_SPI_MODULE_ENABLED
 
@@ -23,10 +23,12 @@ enum class AS5048AParams: uint16_t {
     ERROR_BIT = 0x4000,
     CLEAR_ERROR_AND_PARITY = 0xC000,
     // Delays
-    CS_DELAY_CYCLES = (uint16_t)(CYCLES_100NS_160Mhz * 3.5f)
+    CS_DELAY_CYCLES = static_cast<uint16_t>(CYCLES_100NS_160Mhz * 3.5f),
+    // Prepared messages
+    READ_MESSAGE = 65535
 };
 
-class AS5048A: public ASxxxx<AS5048AParams> {
+class AS5048A final: public ASxxxx<AS5048AParams> {
 public:
     AS5048A(
         GpioPin&& spi_ss,
