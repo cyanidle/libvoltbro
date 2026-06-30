@@ -44,7 +44,7 @@ public:
     Inverter(ADC_HandleTypeDef* hadc): hadc(hadc) {}
 
     void start() override {
-        if (!has_started()) {
+        if (has_started()) {
             return;
         }
 
