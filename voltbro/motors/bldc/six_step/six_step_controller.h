@@ -13,6 +13,15 @@
 class SixStepController: public BLDCController {
 private:
     HallSensor& hall_sensor;
+
+    // --- velocity estimation state (hall transitions over time) ---
+    int32_t last_counts = 0;          // last observed absolute encoder position, in counts
+    uint32_t last_velocity_tick = 0;  // HAL_GetTick() at last velocity update, ms
+    bool velocity_initialized = false;
+    // No hall transition for this long => shaft is considered stopped.
+    static constexpr uint32_t VELOCITY_TIMEOUT_MS = 100;
+
+    void update_velocity();
 public:
     SixStepController(
         DriveRuntimeConfig& runtime_config,
