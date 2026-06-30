@@ -73,6 +73,8 @@ public:
         if (zero_in_threshold && config.tolerance != 0.0f && (fabs(error) <= config.tolerance)) {
             signal = 0.0f;
             integral_error = 0.0f;
+            // Keep prev_error current so re-entry doesn't produce a derivative spike.
+            prev_error = error;
         }
         else {
             auto [raw_signal, new_integral_error] = get_raw_signal_and_intergal(error, dt);
@@ -89,6 +91,7 @@ public:
         if (zero_in_threshold && config.tolerance != 0.0f && (fabs(error) <= config.tolerance)) {
             signal = 0.0f;
             integral_error = 0.0f;
+            prev_error = error;
         }
         else {
             auto [raw_signal, new_integral_error] = get_raw_signal_and_intergal(error, dt);
@@ -96,7 +99,9 @@ public:
             if (raw_signal < upper_limit && raw_signal > lower_limit) {
                 integral_error = new_integral_error;
             }
-            signal = std::clamp(raw_signal, config.min_output, config.max_output);
+            // Clamp to the limits this call was given (not config.min/max_output),
+            // so regulation(e, dt, limit) actually bounds the output to +/-limit.
+            signal = std::clamp(raw_signal, lower_limit, upper_limit);
         }
         return signal;
     }
