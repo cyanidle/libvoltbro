@@ -24,9 +24,13 @@ class SixStepSpeedController {
 private:
     SixStepController& motor;
     PIDRegulator velocity_pid;
-    // Desired shaft angular velocity, rad/s. Aligned for atomic access since it
-    // can be written from a CAN callback and read from the control loop.
+    // Desired velocity and feedback are both scaled by feedback_scale, so the
+    // regulator works in whatever unit the target is expressed in. With
+    // feedback_scale = wheel_radius the controller matches linear wheel speed
+    // (m/s); with 1.0 it matches shaft angular velocity (rad/s). Aligned for
+    // atomic access (written from a CAN callback, read from the control loop).
     arm_atomic(float) target_velocity = 0.0f;
+    arm_atomic(float) feedback_scale = 1.0f;
 
 public:
     SixStepSpeedController(SixStepController& motor, PIDConfig&& pid_config):
@@ -37,8 +41,12 @@ public:
     void set_target_velocity(float velocity) { target_velocity = velocity; }
     float get_target_velocity() const { return target_velocity; }
 
-    // Feedback value the regulator is acting on, rad/s.
-    float get_velocity() const { return motor.get_velocity(); }
+    // Multiplier applied to the shaft angular velocity to get the feedback in
+    // the same unit as the target (e.g. wheel_radius for linear m/s).
+    void set_feedback_scale(float scale) { feedback_scale = scale; }
+
+    // Feedback value the regulator is acting on (target's unit).
+    float get_velocity() const { return motor.get_velocity() * feedback_scale; }
 
     // Retune the regulator at run time (e.g. from a config message).
     void set_pid_config(PIDConfig&& config) { velocity_pid.update_config(std::move(config)); }
@@ -49,7 +57,7 @@ public:
      * the wrapped controller; the controller's own update() then drives the PWM.
      */
     void update(float dt) {
-        const float error = target_velocity - motor.get_velocity();
+        const float error = target_velocity - get_velocity();
         // zero_in_threshold = false: hold the computed voltage even when the
         // error is small, otherwise the wheel would coast inside the tolerance.
         const float voltage = velocity_pid.regulation(error, dt, false);

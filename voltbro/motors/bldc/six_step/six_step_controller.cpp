@@ -6,8 +6,16 @@
 void SixStepController::update_velocity() {
     // Absolute shaft position in encoder counts. revolutions tracks full turns and
     // get_value() the position within a turn, so this is continuous across wraps.
-    const int32_t counts = hall_sensor.get_revolutions() * (int32_t)hall_sensor.CPR
-                         + (int32_t)hall_sensor.get_value();
+    // Read revolutions + value as a consistent pair: the hall EXTI ISR bumps
+    // both together at the CPR wrap, so a torn read there jumps counts by ±CPR
+    // and produces a one-sample velocity spike. Retry until revolutions is
+    // stable across the value read.
+    int32_t rev, val;
+    do {
+        rev = hall_sensor.get_revolutions();
+        val = (int32_t)hall_sensor.get_value();
+    } while (rev != hall_sensor.get_revolutions());
+    const int32_t counts = rev * (int32_t)hall_sensor.CPR + val;
     const uint32_t now = HAL_GetTick();  // ms, SysTick time base
 
     // counts -> mechanical radians at the output shaft (after the gearbox)
