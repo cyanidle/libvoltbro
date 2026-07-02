@@ -58,10 +58,8 @@ public:
      */
     void update(float dt) {
         const float error = target_velocity - get_velocity();
-        // zero_in_threshold = false: hold the computed voltage even when the
-        // error is small, otherwise the wheel would coast inside the tolerance.
-        const float voltage = velocity_pid.regulation(error, dt, false);
-        motor.set_voltage_point(voltage);
+        const float correction = velocity_pid.regulation(error, dt);
+        motor.set_voltage_point(correction + motor.target);
     }
 };
 

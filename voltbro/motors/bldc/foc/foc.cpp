@@ -276,7 +276,7 @@ void FOC::update() {
             else if (point_type == SetPointType::VELOCITY) {
                 control_error = target - get_velocity();
             }
-            float controller_response = control_reg.regulation(control_error, T, false);
+            float controller_response = control_reg.regulation(control_error, T);
             #ifdef MONITOR
             control_error_glob = control_error;
             controller_response_glob = controller_response;
