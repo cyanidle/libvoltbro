@@ -34,14 +34,26 @@ HAL_StatusTypeDef BLDCController::stop() {
     // This prevents stale POSITION/VELOCITY/TORQUE/UNIVERSAL set-points from being reused
     // on the next enable cycle.
     (void)set_voltage_point(0.0f);
+    // Actively drive the duty cycles (and the compare registers) to zero, so
+    // the bridge is off even if the enable line glitches or is shared.
+    DQs[0] = DQs[1] = DQs[2] = 0;
+    set_pwm();
     drive_info.en_pin.reset();
     _is_on = false;
     return HAL_OK;
 }
 
 HAL_StatusTypeDef BLDCController::start() {
+    if (_is_on) {
+        // Idempotent: do not re-pulse the enable line or reset the target.
+        return HAL_OK;
+    }
     // Start from a neutral control target to avoid immediate re-application of stale commands.
     (void)set_voltage_point(0.0f);
+    // Zero the duty cycles before the enable pulse so no stale CCR value is
+    // applied while the driver is enabled.
+    DQs[0] = DQs[1] = DQs[2] = 0;
+    set_pwm();
     for (int i = 0; i < 3; i++) {
         drive_info.en_pin.reset();
         HAL_Delay(10);
