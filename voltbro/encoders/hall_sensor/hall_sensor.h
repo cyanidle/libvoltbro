@@ -21,7 +21,6 @@ enum class EncoderStep: uint8_t {
     AC = 3
 };
 
-constexpr uint8_t NONE_UINT8 = std::numeric_limits<uint8_t>::max();
 constexpr uint16_t NONE_UINT16 = std::numeric_limits<uint16_t>::max();
 
 class HallSensor: public GenericEncoder {
@@ -40,7 +39,9 @@ private:
     // (000/111 are not reachable with 120-degree hall placement).
     bool step_is_valid = false;
     int8_t direction = 0;
-    uint8_t last_activated = NONE_UINT8;
+    // Raw 3-bit hall state of the last processed event (0 before the first
+    // sample / resync()).
+    uint8_t raw_state = 0;
     const GPIO_TypeDef* pin_1_gpiox;
     const GPIO_TypeDef* pin_2_gpiox;
     const GPIO_TypeDef* pin_3_gpiox;
@@ -48,6 +49,11 @@ private:
     const pin pin_2;
     const pin pin_3;
     HallSequence sequence;
+
+    // transition_table[from][to]: +1 if from->to is a positive-direction
+    // commutation transition, -1 if negative, 0 if it is not a legal single
+    // six-step transition (same-channel retrigger, multi-channel jump).
+    int8_t transition_table[8][8] = {};
 
     static constexpr bool is_valid_raw_state(uint8_t raw) {
         return raw >= 1 && raw <= 6;
@@ -64,6 +70,9 @@ private:
     FORCE_INLINE EncoderStep get_encoder_step() {
         return EncoderStep(get_raw_state());
     }
+
+    // Fills transition_table from `sequence` (pure math, no hardware access).
+    void build_transition_table();
 public:
     HallSensor(
         encoder_data CPR,

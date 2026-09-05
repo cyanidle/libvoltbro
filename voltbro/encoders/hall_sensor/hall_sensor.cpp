@@ -32,6 +32,53 @@ HallSensor::HallSensor(
     // sampling the pins here yields garbage and caches a bogus step. Call
     // resync() once after GPIO init instead.
     increment = is_inverted ? -1 : 1;
+    build_transition_table();
+}
+
+void HallSensor::build_transition_table() {
+    const uint8_t weight[3] = {
+        to_underlying(sequence[0]),
+        to_underlying(sequence[1]),
+        to_underlying(sequence[2])
+    };
+    // Positive-direction channel activation cycle (the convention previously
+    // encoded in handle_hall_channel): after channel 0 activates the next
+    // positive transition flips channel 2, then 1, then 0 again.
+    const uint8_t next_channel[3] = {2, 0, 1};
+
+    // Find the unique valid 6-state cycle: try every (start state, last
+    // activated channel) pair and keep the one where six consecutive
+    // positive-direction flips visit only valid states and return to start.
+    for (uint8_t start = 1; start <= 6; start++) {
+        for (uint8_t start_channel = 0; start_channel < 3; start_channel++) {
+            uint8_t state = start;
+            uint8_t channel = start_channel;
+            uint8_t visited[6];
+            bool ok = true;
+            for (int i = 0; i < 6; i++) {
+                channel = next_channel[channel];
+                state = (uint8_t)(state ^ weight[channel]);
+                if (!is_valid_raw_state(state)) {
+                    ok = false;
+                    break;
+                }
+                visited[i] = state;
+            }
+            if (!ok || state != start) {
+                continue;
+            }
+            // The found cycle is the positive direction; the same cycle
+            // walked backwards is the negative one.
+            uint8_t from = start;
+            for (int i = 0; i < 6; i++) {
+                const uint8_t to = visited[i];
+                transition_table[from][to] = 1;
+                transition_table[to][from] = -1;
+                from = to;
+            }
+            return;
+        }
+    }
 }
 
 void HallSensor::resync() {
@@ -48,77 +95,48 @@ void HallSensor::resync() {
     )
 }
 
-#ifdef DEBUG
-int8_t activated_pin;
-#endif
 bool HallSensor::handle_hall_channel(pin channel) {
-#ifndef DEBUG
-    uint8_t activated_pin;
-#endif
-
     if (IS_EXTI_TRUSTED && channel != NONE_UINT16) {
+        // Fast path: the EXTI tells us exactly which channel toggled.
         if (pin_1 == channel) {
-            activated_pin = 0;
-        } else if (pin_2 == channel) {
-            activated_pin = 1;
-        } else {
-            activated_pin = 2;
+            state_1 = !state_1;
         }
-        *(&state_1 + activated_pin) = !*(&state_1 + activated_pin);
+        else if (pin_2 == channel) {
+            state_2 = !state_2;
+        }
+        else if (pin_3 == channel) {
+            state_3 = !state_3;
+        }
+        else {
+            return false;  // not one of our channels
+        }
     }
     else {
-        bool old_state_1 = state_1;
-        bool old_state_2 = state_2;
-        bool old_state_3 = state_3;
         state_1 = get_pin_state(pin_1_gpiox, pin_1);
         state_2 = get_pin_state(pin_2_gpiox, pin_2);
         state_3 = get_pin_state(pin_3_gpiox, pin_3);
-        if (old_state_1 != state_1) {
-            activated_pin = 0;
-        }
-        else if (old_state_2 != state_2) {
-            activated_pin = 1;
-        }
-        else if (old_state_3 != state_3) {
-            activated_pin = 2;
-        }
-        else {
-            activated_pin = NONE_UINT8;
-        }
     }
 
-    if (activated_pin == NONE_UINT8) {
+    const uint8_t new_raw = get_raw_state();
+    const uint8_t old_raw = raw_state;
+    raw_state = new_raw;
+    step = EncoderStep(new_raw);
+    step_is_valid = is_valid_raw_state(new_raw);
+
+    if (new_raw == old_raw) {
         return false;
     }
 
-    if (last_activated == NONE_UINT8) {
-        last_activated = activated_pin;
-        step = get_encoder_step();
-        step_is_valid = is_valid_raw_state(get_raw_state());
-        return true;
+    const int8_t new_direction = transition_table[old_raw][new_raw];
+    if (new_direction == 0) {
+        // Not a legal single six-step transition: a same-channel retrigger
+        // (EXTI glitch) or several channels changed at once (missed edges).
+        // The state was re-synchronised above; just don't count the event.
+        return false;
     }
+    direction = new_direction;
 
-    int32_t signed_value = (int32_t)value;
-    bool positive_direction = false;
-    switch (last_activated) {
-        case 0:
-            positive_direction = activated_pin == 2;
-            break;
-        case 1:
-            positive_direction = activated_pin == 0;
-            break;
-        case 2:
-            positive_direction = activated_pin == 1;
-            break;
-    }
-    if (positive_direction) {
-        direction = 1;
-    } else {
-        direction = -1;
-    }
-    signed_value += increment * direction;
-    last_activated = activated_pin;
-
+    int32_t signed_value = (int32_t)value + increment * direction;
     if (signed_value >= CPR) {
         signed_value = signed_value - CPR;
         incr_revolutions();
@@ -130,8 +148,6 @@ bool HallSensor::handle_hall_channel(pin channel) {
 
     bool has_changed = value != unsigned_value;
     value = unsigned_value;
-    step = get_encoder_step();
-    step_is_valid = is_valid_raw_state(get_raw_state());
 
     return has_changed;
 }
