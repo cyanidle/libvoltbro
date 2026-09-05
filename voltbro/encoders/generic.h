@@ -18,8 +18,9 @@ protected:
     /* These are written from the encoder ISR and read from the control loop:
      * volatile prevents the compiler from caching them across the ISR
      * boundary (alignment alone only guarantees atomicity, not visibility). */
-    volatile arm_atomic(int) revolutions = 0;
-    volatile arm_atomic(encoder_data) value = 0;
+    arm_atomic(volatile int) revolutions = 0;
+    arm_atomic(volatile encoder_data) value = 0;
+
 public:
     const int electric_offset = 0;
     const encoder_data CPR;
@@ -48,10 +49,10 @@ public:
     };
 
     FORCE_INLINE void incr_revolutions() {
-        revolutions++;
+        revolutions = revolutions + 1;
     }
     FORCE_INLINE void decr_revolutions() {
-        revolutions--;
+        revolutions = revolutions - 1;
     }
 
     FORCE_INLINE int get_revolutions() const{
