@@ -65,9 +65,15 @@ public:
     }
 
     void update() override;
+
+    // Freewheel the motor: all low-side inputs off, all duty cycles zeroed
+    // and pushed to the timer compare registers.
+    void coast();
 };
 
-void step_to_phases(EncoderStep step, DrivePhase& first, DrivePhase& second);
+// Maps a commutation step to the phase pair to energise. Returns false for
+// an invalid step (raw hall 000/111); first/second are left untouched then.
+bool step_to_phases(EncoderStep step, DrivePhase& first, DrivePhase& second);
 
 #endif
 #endif

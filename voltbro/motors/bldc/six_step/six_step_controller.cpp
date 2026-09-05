@@ -57,6 +57,16 @@ void SixStepController::update_velocity() {
     }
 }
 
+void SixStepController::coast() {
+    if (drive_info.l_pins.has_value()) {
+        for (const auto& pin : drive_info.l_pins.value()) {
+            pin.reset();
+        }
+    }
+    DQs[0] = DQs[1] = DQs[2] = 0;
+    set_pwm();
+}
+
 void SixStepController::update() {
     update_velocity();
 
@@ -66,7 +76,13 @@ void SixStepController::update() {
     inverter.update();
 
     DrivePhase first, second;
-    step_to_phases(hall_sensor.get_step(), first, second);
+    if (!hall_sensor.is_step_valid() ||
+        !step_to_phases(hall_sensor.get_step(), first, second)) {
+        // Invalid or never-sampled hall state (000/111): freewheel instead
+        // of commutating on uninitialised phases.
+        coast();
+        return;
+    }
 
     // TODO: check and report if point_type is not voltage?
     int16_t new_pwm = full_pwm / inverter.get_busV() * target;  // TODO: busV or manually set supply_voltage?
@@ -88,32 +104,34 @@ void SixStepController::update() {
     set_pwm();
 }
 
-void step_to_phases(EncoderStep step, DrivePhase& first, DrivePhase& second) {
+bool step_to_phases(EncoderStep step, DrivePhase& first, DrivePhase& second) {
     switch (step) {
         case EncoderStep::AB:
             first = DrivePhase::PHASE_A;
             second = DrivePhase::PHASE_B;
-            break;
+            return true;
         case EncoderStep::AC:
             first = DrivePhase::PHASE_A;
             second = DrivePhase::PHASE_C;
-            break;
+            return true;
         case EncoderStep::BC:
             first = DrivePhase::PHASE_B;
             second = DrivePhase::PHASE_C;
-            break;
+            return true;
         case EncoderStep::BA:
             first = DrivePhase::PHASE_B;
             second = DrivePhase::PHASE_A;
-            break;
+            return true;
         case EncoderStep::CA:
             first = DrivePhase::PHASE_C;
             second = DrivePhase::PHASE_A;
-            break;
+            return true;
         case EncoderStep::CB:
             first = DrivePhase::PHASE_C;
             second = DrivePhase::PHASE_B;
-            break;
+            return true;
+        default:
+            return false;
     }
 }
 
