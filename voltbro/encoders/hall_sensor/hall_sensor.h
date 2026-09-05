@@ -70,10 +70,6 @@ private:
         );
     }
 
-    FORCE_INLINE EncoderStep get_encoder_step() {
-        return EncoderStep(get_raw_state());
-    }
-
     // Fills transition_table from `sequence` (pure math, no hardware access).
     void build_transition_table();
 public:
