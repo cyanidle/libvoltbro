@@ -111,11 +111,11 @@ protected:
 
     arm_atomic(SetPointType) point_type = SetPointType::VOLTAGE;
 
-    arm_atomic(float) shaft_angle;
-    arm_atomic(float) shaft_velocity;
+    arm_atomic(float) shaft_angle = 0;
+    arm_atomic(float) shaft_velocity = 0;
     arm_atomic(float) shaft_torque = 0;
-    arm_atomic(bool) _is_on;
-    arm_atomic(bool) is_stalling;
+    arm_atomic(bool) _is_on = false;
+    arm_atomic(bool) is_stalling = false;
     uint16_t DQs[3] = {0, 0, 0};
 public:
     arm_atomic(float) target = 0;
