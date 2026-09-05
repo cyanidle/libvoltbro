@@ -27,11 +27,25 @@ HallSensor::HallSensor(
     pin_3(pin_3),
     sequence(std::move(sequence))
     {
-    state_1 = get_pin_state(pin_1_gpiox, pin_1);
-    state_2 = get_pin_state(pin_2_gpiox, pin_2);
-    state_3 = get_pin_state(pin_3_gpiox, pin_3);
+    // NOTE: deliberately no GPIO reads here. This object is usually
+    // constructed statically, before GPIO clocks and pins are configured, so
+    // sampling the pins here yields garbage and caches a bogus step. Call
+    // resync() once after GPIO init instead.
     increment = is_inverted ? -1 : 1;
-    step = get_encoder_step();
+}
+
+void HallSensor::resync() {
+    const int s1 = get_pin_state(pin_1_gpiox, pin_1);
+    const int s2 = get_pin_state(pin_2_gpiox, pin_2);
+    const int s3 = get_pin_state(pin_3_gpiox, pin_3);
+    CRITICAL_SECTION(
+        state_1 = s1;
+        state_2 = s2;
+        state_3 = s3;
+        const uint8_t raw = get_raw_state();
+        step = EncoderStep(raw);
+        step_is_valid = is_valid_raw_state(raw);
+    )
 }
 
 #ifdef DEBUG
@@ -80,6 +94,7 @@ bool HallSensor::handle_hall_channel(pin channel) {
     if (last_activated == NONE_UINT8) {
         last_activated = activated_pin;
         step = get_encoder_step();
+        step_is_valid = is_valid_raw_state(get_raw_state());
         return true;
     }
 
@@ -116,6 +131,7 @@ bool HallSensor::handle_hall_channel(pin channel) {
     bool has_changed = value != unsigned_value;
     value = unsigned_value;
     step = get_encoder_step();
+    step_is_valid = is_valid_raw_state(get_raw_state());
 
     return has_changed;
 }

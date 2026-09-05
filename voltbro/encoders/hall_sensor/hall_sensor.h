@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 
 #include "voltbro/encoders/generic.h"
 #include "voltbro/utils.hpp"
@@ -30,11 +31,14 @@ private:
 
     const bool IS_EXTI_TRUSTED;
 
-    int state_1;
-    int state_2;
-    int state_3;
-    int8_t increment;
-    EncoderStep step;
+    int state_1 = 0;
+    int state_2 = 0;
+    int state_3 = 0;
+    int8_t increment = 1;
+    EncoderStep step = EncoderStep::AB;
+    // False until a real sample of the hall inputs produces a valid state
+    // (000/111 are not reachable with 120-degree hall placement).
+    bool step_is_valid = false;
     int8_t direction = 0;
     uint8_t last_activated = NONE_UINT8;
     const GPIO_TypeDef* pin_1_gpiox;
@@ -45,12 +49,20 @@ private:
     const pin pin_3;
     HallSequence sequence;
 
-    FORCE_INLINE EncoderStep get_encoder_step() {
-        return EncoderStep(
+    static constexpr bool is_valid_raw_state(uint8_t raw) {
+        return raw >= 1 && raw <= 6;
+    }
+
+    FORCE_INLINE uint8_t get_raw_state() const {
+        return (uint8_t)(
             state_1 * to_underlying(sequence[0]) +
             state_2 * to_underlying(sequence[1]) +
             state_3 * to_underlying(sequence[2])
         );
+    }
+
+    FORCE_INLINE EncoderStep get_encoder_step() {
+        return EncoderStep(get_raw_state());
     }
 public:
     HallSensor(
@@ -66,7 +78,19 @@ public:
         bool is_exti_trusted=false
     );
 
-    EncoderStep get_step() const { return step; }
+    /*
+     * (Re)synchronise with the physical hall inputs. The constructor does NOT
+     * read GPIO (the sensor is typically constructed statically, before the
+     * GPIO clocks/pins are configured, so the read would be garbage); call
+     * this once after GPIO init, before relying on get_step() or counting.
+     */
+    void resync();
+
+    FORCE_INLINE EncoderStep get_step() const { return step; }
+    // False while no valid hall state has been sampled (or the inputs read
+    // 000/111): the controller must coast instead of commutating.
+    FORCE_INLINE bool is_step_valid() const { return step_is_valid; }
+
     bool handle_hall_channel(pin channel = NONE_UINT16);
 
     void update_value() override {}
