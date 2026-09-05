@@ -85,19 +85,26 @@ void SixStepController::update() {
     }
 
     // TODO: check and report if point_type is not voltage?
-    int16_t new_pwm = full_pwm / inverter.get_busV() * target;  // TODO: busV or manually set supply_voltage?
-
-    const uint32_t MAX_PWM = full_pwm * 0.95f;
-    if ( ((uint16_t)abs(new_pwm)) > MAX_PWM ) {
-        new_pwm = copysign(MAX_PWM, new_pwm);
+    const float bus_v = inverter.get_busV();  // TODO: busV or manually set supply_voltage?
+    const float target_voltage = target;
+    float pwm_f = 0.0f;
+    if (std::isfinite(bus_v) && (bus_v > 0.0f) && std::isfinite(target_voltage)) {
+        pwm_f = ((float)full_pwm / bus_v) * target_voltage;
     }
+    // else: no usable bus measurement or target - drive zero PWM safely.
+
+    // Clamp in the float domain BEFORE narrowing to int16_t; clamping after
+    // the conversion cannot catch out-of-range floats (UB on overflow).
+    const float max_pwm = (float)full_pwm * 0.95f;
+    pwm_f = std::clamp(pwm_f, -max_pwm, max_pwm);
+    int16_t new_pwm = (int16_t)std::lrintf(pwm_f);
 
 #ifndef USE_CONTROL
     local_pwm = 300;
 #endif
 
     if (hall_sensor.is_inverted) {
-        new_pwm = -new_pwm;
+        new_pwm = (int16_t)-new_pwm;
     }
     flow_direction(first, second, new_pwm);
 
