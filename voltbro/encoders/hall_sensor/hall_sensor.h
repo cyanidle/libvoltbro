@@ -34,14 +34,17 @@ private:
     int state_2 = 0;
     int state_3 = 0;
     int8_t increment = 1;
-    EncoderStep step = EncoderStep::AB;
+    // Written from the hall EXTI ISR, read from the control loop: volatile
+    // for visibility across the ISR boundary (aligned word accesses are
+    // atomic on Cortex-M4, but without volatile they may be cached).
+    volatile EncoderStep step = EncoderStep::AB;
     // False until a real sample of the hall inputs produces a valid state
     // (000/111 are not reachable with 120-degree hall placement).
-    bool step_is_valid = false;
+    volatile bool step_is_valid = false;
     int8_t direction = 0;
     // Raw 3-bit hall state of the last processed event (0 before the first
     // sample / resync()).
-    uint8_t raw_state = 0;
+    volatile uint8_t raw_state = 0;
     const GPIO_TypeDef* pin_1_gpiox;
     const GPIO_TypeDef* pin_2_gpiox;
     const GPIO_TypeDef* pin_3_gpiox;
