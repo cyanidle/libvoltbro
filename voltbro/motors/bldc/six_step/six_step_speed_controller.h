@@ -51,15 +51,18 @@ public:
     // Retune the regulator at run time (e.g. from a config message).
     void set_pid_config(PIDConfig&& config) { velocity_pid.update_config(std::move(config)); }
 
+    // Clear the regulator state. Call when switching back to this controller
+    // from another control mode so a stale integral does not kick the motor.
+    void reset() { velocity_pid.reset(); }
+
     /*
      * Run one regulation step. dt is the time since the previous call, seconds.
-     * Computes the velocity error and pushes the resulting voltage set-point to
-     * the wrapped controller; the controller's own update() then drives the PWM.
+     * The regulator is positional: its output IS the voltage set-point for
+     * the wrapped controller (already clamped to [min_output, max_output]).
      */
     void update(float dt) {
         const float error = target_velocity - get_velocity();
-        const float correction = velocity_pid.regulation(error, dt);
-        motor.set_voltage_point(correction + motor.target);
+        motor.set_voltage_point(velocity_pid.regulation(error, dt));
     }
 };
 

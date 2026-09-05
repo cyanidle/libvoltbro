@@ -69,4 +69,13 @@ public:
         config.ki = ki;
         config.kd = kd;
     }
+
+    // Clears the integral term, the previous error and the last output.
+    // Call when (re)entering closed-loop control so stale state from a
+    // previous run does not kick the plant.
+    void reset() {
+        signal = 0.0f;
+        integral_error = 0.0f;
+        prev_error = 0.0f;
+    }
 };
