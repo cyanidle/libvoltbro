@@ -70,6 +70,9 @@ bool SixStepController::set_voltage_point(float voltage) {
     return BLDCController::set_voltage_point(voltage);
 }
 
+// The electrical cycle implied by the B-C-A Hall weighting of the application's
+// wiring (see App/app.cpp); step_to_phases() below encodes the same assumption.
+// A different Hall harness permutation would need this cycle rederived.
 static EncoderStep next_step(EncoderStep step, bool reverse) {
     constexpr EncoderStep sequence[] = {
         EncoderStep::AB, EncoderStep::AC, EncoderStep::BC,
