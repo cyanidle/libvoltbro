@@ -82,30 +82,37 @@ void HallSensor::build_transition_table() {
 }
 
 void HallSensor::resync() {
-    const int s1 = get_pin_state(pin_1_gpiox, pin_1);
-    const int s2 = get_pin_state(pin_2_gpiox, pin_2);
-    const int s3 = get_pin_state(pin_3_gpiox, pin_3);
     CRITICAL_SECTION(
-        state_1 = s1;
-        state_2 = s2;
-        state_3 = s3;
+        state_1 = get_pin_state(pin_1_gpiox, pin_1);
+        state_2 = get_pin_state(pin_2_gpiox, pin_2);
+        state_3 = get_pin_state(pin_3_gpiox, pin_3);
         const uint8_t raw = get_raw_state();
+        raw_state = raw;
         step = EncoderStep(raw);
         step_is_valid = is_valid_raw_state(raw);
     )
 }
 
+void HallSensor::update_value() {
+    // Polling repairs a missed EXTI even while stopped. Serialize the complete
+    // sample/count update with the ISR so a duplicate sample cannot count twice.
+    CRITICAL_SECTION(
+        handle_hall_channel();
+    )
+}
+
 bool HallSensor::handle_hall_channel(pin channel) {
     if (IS_EXTI_TRUSTED && channel != NONE_UINT16) {
-        // Fast path: the EXTI tells us exactly which channel toggled.
+        // Sample the indicated channel instead of toggling its cache: polling
+        // may already have observed this edge before the pending ISR runs.
         if (pin_1 == channel) {
-            state_1 = !state_1;
+            state_1 = get_pin_state(pin_1_gpiox, pin_1);
         }
         else if (pin_2 == channel) {
-            state_2 = !state_2;
+            state_2 = get_pin_state(pin_2_gpiox, pin_2);
         }
         else if (pin_3 == channel) {
-            state_3 = !state_3;
+            state_3 = get_pin_state(pin_3_gpiox, pin_3);
         }
         else {
             return false;  // not one of our channels

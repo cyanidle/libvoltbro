@@ -1,21 +1,7 @@
 #include "six_step_controller.h"
 #if defined(HAL_TIM_MODULE_ENABLED) && defined(HAL_ADC_MODULE_ENABLED)
 
-#define USE_CONTROL
-
-void SixStepController::update_velocity() {
-    // Absolute shaft position in encoder counts. revolutions tracks full turns and
-    // get_value() the position within a turn, so this is continuous across wraps.
-    // Read revolutions + value as a consistent pair: the hall EXTI ISR bumps
-    // both together at the CPR wrap, so a torn read there jumps counts by ±CPR
-    // and produces a one-sample velocity spike. Retry until revolutions is
-    // stable across the value read.
-    int32_t rev, val;
-    do {
-        rev = hall_sensor.get_revolutions();
-        val = (int32_t)hall_sensor.get_value();
-    } while (rev != hall_sensor.get_revolutions());
-    const int32_t counts = rev * (int32_t)hall_sensor.CPR + val;
+void SixStepController::update_velocity(int32_t counts) {
     const uint32_t now = HAL_GetTick();  // ms, SysTick time base
 
     // counts -> mechanical radians at the output shaft (after the gearbox)
@@ -67,31 +53,87 @@ void SixStepController::coast() {
     set_pwm();
 }
 
-void SixStepController::update() {
-    update_velocity();
+void SixStepController::reset_recovery() {
+    fault = Fault::NONE;
+    recovery_direction = 0;
+    recovery_attempts = 0;
+    kicking = false;
+}
 
-    if (!_is_on) {
-        return;
+bool SixStepController::set_voltage_point(float voltage) {
+    if (voltage == 0.0f) {
+        // Honor zero even if the next CAN command is drained in the same loop.
+        // BLDCController::stop/start also go through this neutral set-point.
+        reset_recovery();
+        coast();
     }
-    inverter.update();
+    return BLDCController::set_voltage_point(voltage);
+}
 
-    DrivePhase first, second;
-    if (!hall_sensor.is_step_valid() ||
-        !step_to_phases(hall_sensor.get_step(), first, second)) {
-        // Invalid or never-sampled hall state (000/111): freewheel instead
-        // of commutating on uninitialised phases.
+static EncoderStep next_step(EncoderStep step, bool reverse) {
+    constexpr EncoderStep sequence[] = {
+        EncoderStep::AB, EncoderStep::AC, EncoderStep::BC,
+        EncoderStep::BA, EncoderStep::CA, EncoderStep::CB
+    };
+    for (unsigned i = 0; i < 6; ++i) {
+        if (sequence[i] == step) {
+            return sequence[(i + (reverse ? 5 : 1)) % 6];
+        }
+    }
+    return step;  // invalid Hall states are rejected before recovery
+}
+
+void SixStepController::update() {
+    hall_sensor.update_value();
+    EncoderStep hall_step;
+    int32_t counts;
+    // The ISR updates both the turn count and within-turn count. Take one
+    // coherent snapshot for commutation, velocity, and the progress watchdog.
+    CRITICAL_SECTION(
+        hall_step = hall_sensor.get_step();
+        counts = hall_sensor.get_revolutions() * (int32_t)hall_sensor.CPR +
+                 (int32_t)hall_sensor.get_value();
+    )
+    update_velocity(counts);
+
+    const float target_voltage = target;
+    if (!_is_on || target_voltage == 0.0f) {
+        reset_recovery();
         coast();
         return;
     }
 
-    // TODO: check and report if point_type is not voltage?
-    const float bus_v = inverter.get_busV();  // TODO: busV or manually set supply_voltage?
-    const float target_voltage = target;
-    float pwm_f = 0.0f;
-    if (std::isfinite(bus_v) && (bus_v > 0.0f) && std::isfinite(target_voltage)) {
-        pwm_f = ((float)full_pwm / bus_v) * target_voltage;
+    // Repeated nonzero CAN commands (including sign changes) do not rearm a
+    // failed startup. A zero command or explicit stop is required.
+    if (fault == Fault::STALLED) {
+        coast();
+        return;
     }
-    // else: no usable bus measurement or target - drive zero PWM safely.
+    if (!std::isfinite(target_voltage)) {
+        fault = Fault::INVALID_COMMAND;
+        kicking = false;
+        coast();
+        return;
+    }
+
+    DrivePhase first, second;
+    if (!step_to_phases(hall_step, first, second)) {
+        fault = Fault::INVALID_HALL;
+        kicking = false;
+        coast();
+        return;
+    }
+
+    inverter.update();
+    const float bus_v = inverter.get_busV();
+    if (!std::isfinite(bus_v) || bus_v <= 0.0f) {
+        fault = Fault::INVALID_SUPPLY;
+        kicking = false;
+        coast();
+        return;
+    }
+    fault = Fault::NONE;
+    float pwm_f = ((float)full_pwm / bus_v) * target_voltage;
 
     // Clamp in the float domain BEFORE narrowing to int16_t; clamping after
     // the conversion cannot catch out-of-range floats (UB on overflow).
@@ -99,12 +141,53 @@ void SixStepController::update() {
     pwm_f = std::clamp(pwm_f, -max_pwm, max_pwm);
     int16_t new_pwm = (int16_t)std::lrintf(pwm_f);
 
-#ifndef USE_CONTROL
-    local_pwm = 300;
-#endif
+    if (new_pwm == 0) {
+        kicking = false;
+        coast();
+        return;
+    }
+
+    const uint32_t now = HAL_GetTick();
+    const int8_t direction = target_voltage < 0.0f ? -1 : 1;
+    if (direction != recovery_direction) {
+        recovery_direction = direction;
+        progress_counts = kick_origin_counts = counts;
+        progress_tick = now;
+        kicking = false;
+    }
+    if (direction * ((int64_t)counts - progress_counts) > 0) {
+        progress_counts = counts;
+        progress_tick = now;
+        kicking = false;
+        if (direction * ((int64_t)counts - kick_origin_counts) >= 6) {
+            recovery_attempts = 0;
+        }
+    }
+
+    if (kicking && (uint32_t)(now - kick_tick) >= KICK_MS) {
+        kicking = false;
+        progress_tick = now;
+    }
 
     if (hall_sensor.is_inverted) {
         new_pwm = (int16_t)-new_pwm;
+    }
+    if (!kicking && (uint32_t)(now - progress_tick) >= NO_PROGRESS_MS) {
+        if (recovery_attempts >= MAX_KICKS) {
+            fault = Fault::STALLED;
+            coast();
+            return;
+        }
+        ++recovery_attempts;
+        kicking = true;
+        kick_tick = now;
+        kick_origin_counts = counts;
+        kick_step = next_step(hall_step, new_pwm < 0);
+    }
+    if (kicking) {
+        // Shift the stator field by one electrical sector to escape an
+        // equilibrium. Keep the requested voltage; never increase it blindly.
+        step_to_phases(kick_step, first, second);
     }
     flow_direction(first, second, new_pwm);
 

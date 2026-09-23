@@ -101,7 +101,7 @@ public:
 
     bool handle_hall_channel(pin channel = NONE_UINT16);
 
-    void update_value() override {}
+    void update_value() override;
     inline encoder_data get_value() const override {
         return value;
     }
