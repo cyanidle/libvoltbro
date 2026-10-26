@@ -192,7 +192,10 @@ void SixStepController::update() {
         // equilibrium. Keep the requested voltage; never increase it blindly.
         step_to_phases(kick_step, first, second);
     }
-    flow_direction(first, second, new_pwm);
+    // The pair is exchanged: on this harness the phase order is reversed with
+    // respect to the Hall state cycle, so energising (first, second) drives the
+    // shaft the wrong way and the progress watchdog sees the count fall.
+    flow_direction(second, first, new_pwm);
 
     set_pwm();
 }
