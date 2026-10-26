@@ -21,7 +21,7 @@ static constexpr double eighth_pi = M_PI / 8;
 
 class BLHeli_SController: public BasicServo {
 public:
-    static constexpr millis RECOMMENDED_DELAY = 1500;
+    static constexpr millis_t RECOMMENDED_DELAY = 1500;
 
     BLHeli_SController(TIM_HandleTypeDef *htim, tim_register channel):
         BasicServo(htim, channel, 1000)

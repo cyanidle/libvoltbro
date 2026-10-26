@@ -22,8 +22,8 @@ typedef uint32_t dac_channel;
 typedef uint32_t tim_register;
 typedef uint16_t encoder_data;
 
-typedef uint32_t millis;
-typedef uint64_t micros;
+typedef uint32_t millis_t;
+typedef uint64_t micros_t;
 
 #define pi2 6.28318530718f
 
@@ -96,10 +96,10 @@ public:
     }
 };
 
-constexpr micros MICROS_S = 1'000'000;
-constexpr micros MICROS_0_1S = 100'000;
-constexpr micros MICROS_0_01S = 10'000;
-constexpr micros MICROS_0_001S = 1000;
+constexpr micros_t MICROS_S = 1'000'000;
+constexpr micros_t MICROS_0_1S = 100'000;
+constexpr micros_t MICROS_0_01S = 10'000;
+constexpr micros_t MICROS_0_001S = 1000;
 
 template <typename E>
 constexpr typename std::underlying_type<E>::type to_underlying(E e) noexcept {

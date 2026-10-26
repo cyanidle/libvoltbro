@@ -5,7 +5,6 @@
 #include <cstdint>
 
 #include "voltbro/utils.hpp"
-#include "voltbro/math/dsp/low_pass_filter.hpp"
 
 class GenericEncoder {
 protected:

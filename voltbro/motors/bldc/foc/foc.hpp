@@ -154,6 +154,9 @@ public:
     void update_control_config(PIDConfig&& new_config) {
         control_reg.update_config(std::move(new_config));
     }
+    void reset_control_regulator() {
+        control_reg.reset();
+    }
     const GenericEncoder& get_encoder() const {
         return encoder;
     }
