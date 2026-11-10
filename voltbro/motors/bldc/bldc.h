@@ -213,6 +213,11 @@ public:
     FORCE_INLINE float get_angle() const {
         return shaft_angle * get_direction_multiplier() + drive_runtime_config.user_angle_offset;
     }
+    // As measured: no direction multiplier and no user angle offset, so a
+    // consumer integrating deltas is unaffected by runtime config changes.
+    FORCE_INLINE float get_shaft_angle() const {
+        return shaft_angle;
+    }
     FORCE_INLINE float get_velocity() const {
         return shaft_velocity * get_direction_multiplier();
     }
