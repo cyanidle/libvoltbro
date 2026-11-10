@@ -24,12 +24,6 @@ private:
     // No hall transition for this long => shaft is considered stopped.
     static constexpr uint32_t VELOCITY_TIMEOUT_MS = 100;
 
-    // Three 40 ms kicks, separated by 200 ms Hall-controlled attempts, fit
-    // inside a one-second drive pulse. A full electrical turn replenishes the
-    // retry budget; Hall-edge chatter alone must not do so.
-    static constexpr uint32_t NO_PROGRESS_MS = 200;
-    static constexpr uint32_t KICK_MS = 40;
-    static constexpr uint8_t MAX_KICKS = 3;
     Fault fault = Fault::NONE;
     int8_t recovery_direction = 0;
     int32_t progress_counts = 0;
@@ -43,6 +37,18 @@ private:
     void reset_recovery();
     void update_velocity(int32_t counts);
 public:
+    // Recovery schedule, public so the host test drives the real constants
+    // instead of a copy that silently goes stale when they are retuned.
+    //
+    // Three 40 ms kicks, separated by NO_PROGRESS_MS of Hall-controlled current.
+    // A full electrical turn replenishes the retry budget; Hall-edge chatter
+    // alone must not do so. The window was 200 ms, which trips on any low-speed
+    // command: below the friction breakaway the shaft legitimately stands still
+    // for longer while the regulator builds up.
+    static constexpr uint32_t NO_PROGRESS_MS = 500;
+    static constexpr uint32_t KICK_MS = 40;
+    static constexpr uint8_t MAX_KICKS = 3;
+
     SixStepController(
         DriveRuntimeConfig& runtime_config,
         DriveInfo& drive_info,
