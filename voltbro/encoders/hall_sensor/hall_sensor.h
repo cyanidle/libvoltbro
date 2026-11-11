@@ -57,6 +57,9 @@ private:
     // commutation transition, -1 if negative, 0 if it is not a legal single
     // six-step transition (same-channel retrigger, multi-channel jump).
     int8_t transition_table[8][8] = {};
+    // Position of each raw state in the positive-direction cycle, 0..5. Used
+    // by resync() to re-base the count on the absolute Hall sector.
+    int8_t sector_of[8] = {};
 
     static constexpr bool is_valid_raw_state(uint8_t raw) {
         return raw >= 1 && raw <= 6;
@@ -91,6 +94,12 @@ public:
      * read GPIO (the sensor is typically constructed statically, before the
      * GPIO clocks/pins are configured, so the read would be garbage); call
      * this once after GPIO init, before relying on get_step() or counting.
+     *
+     * The count is re-based on the absolute Hall sector of the current state,
+     * not on zero: `get_value()` then encodes the rotor position itself, so an
+     * angle derived as value/CPR*2*pi is independent of where the rotor rested
+     * at boot. (Starting every boot from a zero count makes a controller's
+     * zero-electric-angle offset depend on the boot position.)
      */
     void resync();
 

@@ -70,11 +70,16 @@ void HallSensor::build_transition_table() {
             // The found cycle is the positive direction; the same cycle
             // walked backwards is the negative one.
             uint8_t from = start;
+            sector_of[start] = 0;
             for (int i = 0; i < 6; i++) {
                 const uint8_t to = visited[i];
                 transition_table[from][to] = 1;
                 transition_table[to][from] = -1;
                 from = to;
+                // visited[5] closes the cycle back onto `start`.
+                if (i < 5) {
+                    sector_of[to] = (int8_t)(i + 1);
+                }
             }
             return;
         }
@@ -90,6 +95,12 @@ void HallSensor::resync() {
         raw_state = raw;
         step = EncoderStep(raw);
         step_is_valid = is_valid_raw_state(raw);
+        if (step_is_valid) {
+            // Re-base on the absolute sector: the electrical angle a
+            // controller derives from the count then depends only on the
+            // rotor position, not on where it rested at boot.
+            value = static_cast<encoder_data>(sector_of[raw]);
+        }
     )
 }
 
