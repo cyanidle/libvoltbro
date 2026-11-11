@@ -150,6 +150,7 @@ bool HallSensor::handle_hall_channel(pin channel) {
         // Not a legal single six-step transition: a same-channel retrigger
         // (EXTI glitch) or several channels changed at once (missed edges).
         // The state was re-synchronised above; just don't count the event.
+        illegal_transitions = illegal_transitions + 1u;
         return false;
     }
     direction = new_direction;
@@ -166,6 +167,9 @@ bool HallSensor::handle_hall_channel(pin channel) {
 
     bool has_changed = value != unsigned_value;
     value = unsigned_value;
+    if (has_changed) {
+        counted_edges = counted_edges + 1u;
+    }
 
     return has_changed;
 }

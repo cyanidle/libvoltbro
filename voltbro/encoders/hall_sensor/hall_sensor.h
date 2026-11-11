@@ -41,6 +41,13 @@ private:
     // False until a real sample of the hall inputs produces a valid state
     // (000/111 are not reachable with 120-degree hall placement).
     volatile bool step_is_valid = false;
+    // Bench diagnostics of the decoder, counted from the ISR: every counted
+    // edge, and every transition no single six-step step can explain (a Hall
+    // glitch, or an edge lost between two samples). A lost edge leaves the
+    // count one sector short, which a FOC angle tracker sees as a 60-degree
+    // error — worth counting instead of inferring.
+    volatile uint32_t counted_edges = 0;
+    volatile uint32_t illegal_transitions = 0;
     int8_t direction = 0;
     // Raw 3-bit hall state of the last processed event (0 before the first
     // sample / resync()).
@@ -107,6 +114,10 @@ public:
     // False while no valid hall state has been sampled (or the inputs read
     // 000/111): the controller must coast instead of commutating.
     FORCE_INLINE bool is_step_valid() const { return step_is_valid; }
+    // Diagnostic counters (see the members): total counted edges and the
+    // transitions that had to be resynchronised instead of counted.
+    FORCE_INLINE uint32_t get_counted_edges() const { return counted_edges; }
+    FORCE_INLINE uint32_t get_illegal_transitions() const { return illegal_transitions; }
 
     bool handle_hall_channel(pin channel = NONE_UINT16);
 
